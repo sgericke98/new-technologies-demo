@@ -1266,59 +1266,6 @@ export default function SellerDetailPage() {
                     </div>
                   </div>
                 </div>
-                
-                {/* Debug Information */}
-                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="text-sm text-blue-800">
-                    <p className="font-medium mb-1">Debug: Available Accounts Pool</p>
-                    <p className="text-xs">
-                      Total Available: {availableAccounts.length} | 
-                      Truly Unassigned: {availableAccounts.filter(a => !a.status).length} | 
-                      From Other Sellers: {availableAccounts.filter(a => a.status === 'available').length}
-                    </p>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="mt-2"
-                      onClick={async () => {
-                        // Debug: Check database state
-                        const { data: allRelationships } = await supabase
-                          .from("relationship_maps")
-                          .select("account_id, seller_id, status");
-                        
-                        const { data: allAccounts } = await supabase
-                          .from("accounts")
-                          .select("id, name");
-                        
-                        console.log("=== DATABASE DEBUG ===");
-                        console.log("All relationships:", allRelationships);
-                        console.log("All accounts:", allAccounts?.length);
-                        console.log("Current seller ID:", id);
-                        
-                        // Check what accounts are assigned to current seller
-                        const currentSellerAccounts = allRelationships?.filter(r => r.seller_id === id) || [];
-                        console.log("Current seller accounts:", currentSellerAccounts);
-                        
-                        // Check what accounts are available from other sellers
-                        const availableFromOthers = allRelationships?.filter(r => r.status === 'available' && r.seller_id !== id) || [];
-                        console.log("Available from other sellers:", availableFromOthers);
-                        
-                        // Check what accounts are restricted
-                        const restricted = allRelationships?.filter(r => 
-                          ["must_keep", "for_discussion", "to_be_peeled", "pinned", "assigned", "up_for_debate", "approval_for_pinning", "approval_for_assigning", "peeled"].includes(r.status)
-                        ) || [];
-                        console.log("Restricted accounts:", restricted);
-                        
-                        toast({
-                          title: "Debug Info",
-                          description: `Check console for database state. Current seller has ${currentSellerAccounts.length} accounts, ${availableFromOthers.length} available from others, ${restricted.length} restricted.`,
-                        });
-                      }}
-                    >
-                      Check Database State
-                    </Button>
-                  </div>
-                </div>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-500 flex-wrap">
                 <div className="flex items-center gap-1">
@@ -1621,48 +1568,6 @@ function AccountCard({
           <div className="flex-1 min-w-0">
             <h4 className="font-bold text-sm text-slate-900 truncate mb-1">{account.name}</h4>
             
-            {/* Status Badge */}
-            <div className="flex items-center gap-1">
-              {isReadOnly && (
-                <div className="flex items-center gap-1">
-                  <Badge variant="secondary" className="text-xs font-medium bg-blue-100 text-blue-800 border-blue-200 px-1.5 py-0.5">
-                    Original
-                  </Badge>
-                  <LockIcon className="h-3 w-3 text-blue-600" />
-                </div>
-              )}
-              
-              {(account.status === 'must_keep' || account.status === 'pinned' || account.status === 'approval_for_pinning') && !isReadOnly && (
-                <div className="flex items-center gap-1">
-                  <Badge variant="secondary" className="text-xs font-medium bg-green-100 text-green-800 border-green-200 px-1.5 py-0.5">
-                    Must Keep
-                  </Badge>
-                  <LockIcon className="h-3 w-3 text-green-600" />
-                </div>
-              )}
-              
-              {(account.status === 'for_discussion' || account.status === 'assigned' || account.status === 'up_for_debate' || account.status === 'approval_for_assigning') && !isReadOnly && (
-                <div className="flex items-center gap-1">
-                  <Badge variant="secondary" className="text-xs font-medium bg-yellow-100 text-yellow-800 border-yellow-200 px-1.5 py-0.5">
-                    For Discussion
-                  </Badge>
-                </div>
-              )}
-              
-              {(account.status === 'to_be_peeled' || account.status === 'peeled') && !isReadOnly && (
-                <div className="flex items-center gap-1">
-                  <Badge variant="secondary" className="text-xs font-medium bg-red-100 text-red-800 border-red-200 px-1.5 py-0.5">
-                    To be Peeled
-                  </Badge>
-                </div>
-              )}
-              
-              {!isReadOnly && (!account.status || account.status === 'available') && (
-                <Badge variant="secondary" className="text-xs font-medium bg-slate-100 text-slate-800 border-slate-200 px-1.5 py-0.5">
-                  Available
-                </Badge>
-              )}
-            </div>
           </div>
           
           {/* Division Badge */}

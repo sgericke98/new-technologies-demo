@@ -12,7 +12,6 @@ export function useAudit() {
     after?: any
   ) => {
     if (!user?.id) {
-      console.warn('Cannot log audit event: user not authenticated');
       return;
     }
 
@@ -28,7 +27,7 @@ export function useAudit() {
       
       await logAuditEvent(auditData);
     } catch (error) {
-      console.error('Failed to log audit event:', error);
+      // Silently handle audit logging errors
     }
   };
 
