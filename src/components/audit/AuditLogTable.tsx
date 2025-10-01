@@ -124,7 +124,7 @@ export function AuditLogTable({
     
     const beforeKeys = Object.keys(before || {});
     const afterKeys = Object.keys(after || {});
-    const allKeys = [...new Set([...beforeKeys, ...afterKeys])];
+    const allKeys = Array.from(new Set([...beforeKeys, ...afterKeys]));
     
     const changes = allKeys.filter(key => {
       const beforeVal = before?.[key];
