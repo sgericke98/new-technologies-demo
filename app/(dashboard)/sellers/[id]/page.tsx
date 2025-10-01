@@ -11,7 +11,8 @@ import React, { useEffect, useState, memo, useMemo, Suspense, lazy } from "react
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { DndContext, DragEndEvent, DragOverlay, useSensor, useSensors, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/core";
+import { DndContext, DragEndEvent, DragOverlay, useSensor, useSensors, PointerSensor, useDraggable, useDroppable, DragStartEvent } from "@dnd-kit/core";
+import { restrictToWindowEdges } from "@dnd-kit/modifiers";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -229,7 +230,7 @@ export default function SellerDetailPage() {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8,
+        distance: 3, // Reduced distance for more responsive dragging
       },
     })
   );
@@ -1429,8 +1430,18 @@ export default function SellerDetailPage() {
                   </div>
                 </div>
 
-                <DragOverlay>
-                  {activeAccount && <AccountCard account={activeAccount} isDragging />}
+                <DragOverlay
+                  modifiers={[restrictToWindowEdges]}
+                  dropAnimation={{
+                    duration: 200,
+                    easing: 'ease-out',
+                  }}
+                >
+                  {activeAccount && (
+                    <div className="rotate-3 scale-105 shadow-2xl">
+                      <AccountCard account={activeAccount} isDragging />
+                    </div>
+                  )}
                 </DragOverlay>
               </DndContext>
             )}
@@ -1459,14 +1470,18 @@ function DroppableColumn({
   const { setNodeRef, isOver } = useDroppable({ id });
 
   return (
-    <div ref={setNodeRef} className="h-full flex flex-col">
+    <div ref={setNodeRef} className={cn(
+      "h-full flex flex-col transition-all duration-200",
+      isOver && !isReadOnly && "bg-primary/5 border-primary/20 scale-[1.01]"
+    )}>
       <div className={cn(
-        "p-3 border-b transition-colors",
+        "p-3 border-b transition-all duration-200",
         id === "original" && "bg-blue-50/50 border-blue-200",
         id === "must_keep" && "bg-green-50/50 border-green-200",
         id === "for_discussion" && "bg-yellow-50/50 border-yellow-200",
         id === "to_be_peeled" && "bg-red-50/50 border-red-200",
-        id === "available" && "bg-slate-50/50 border-slate-200"
+        id === "available" && "bg-slate-50/50 border-slate-200",
+        isOver && !isReadOnly && "bg-primary/10 border-primary/30 shadow-lg"
       )}>
         <div className="flex items-center gap-2">
           <div className={cn(
@@ -1480,6 +1495,11 @@ function DroppableColumn({
           <div className="flex-1 min-w-0">
             <h3 className="font-bold text-sm text-slate-900 truncate">{title}</h3>
             <p className="text-xs text-slate-600">{accounts.length} accounts</p>
+            {isOver && !isReadOnly && (
+              <p className="text-xs text-primary font-medium animate-pulse mt-1">
+                Drop here to assign
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -1527,6 +1547,7 @@ function DraggableAccount({
 
   const style = transform ? {
     transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+    zIndex: 1000,
   } : undefined;
 
   return (
@@ -1560,7 +1581,7 @@ function AccountCard({
       "transition-all duration-200 relative border group w-full",
       !isReadOnly && "cursor-grab active:cursor-grabbing hover:shadow-md hover:border-primary/50 hover:-translate-y-0.5",
       isReadOnly && "bg-slate-50/50 border-slate-200",
-      isDragging && "opacity-60 shadow-2xl scale-105 rotate-1"
+      isDragging && "opacity-40 shadow-2xl scale-110 rotate-2 border-primary/50"
     )}>
       <CardContent className="p-3">
         {/* Header with Account Name and Status */}
