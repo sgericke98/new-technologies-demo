@@ -124,7 +124,7 @@ export default function DashboardPage() {
     },
   });
 
-  // Fetch relationship maps for revenue calculations
+  // Fetch relationship maps for revenue calculations (only must_keep status)
   const { data: relationships = [] } = useQuery({
     queryKey: ["relationship_maps"],
     queryFn: async () => {
@@ -133,7 +133,8 @@ export default function DashboardPage() {
         .select(`
           *,
           account:accounts!inner(*, revenue:account_revenues!inner(*))
-        `);
+        `)
+        .eq("status", "must_keep");
       
       if (error) throw error;
       return data || [];
@@ -177,8 +178,7 @@ export default function DashboardPage() {
     
     // Get relationships for sellers of this size
     const sizeRelationships = relationships.filter(
-      r => sizeSellerIds.includes(r.seller_id) && 
-           r.status === 'must_keep'
+      r => sizeSellerIds.includes(r.seller_id)
     );
     
     // Calculate total weighted revenue for this size
@@ -241,8 +241,7 @@ export default function DashboardPage() {
   // Calculate seller account counts and health indicators
   const sellerRevenues = sellers.map(seller => {
     const sellerRelationships = relationships.filter(
-      r => r.seller_id === seller.id && 
-           r.status === 'must_keep'
+      r => r.seller_id === seller.id
     );
 
     // Calculate weighted revenue for this seller using the same logic as other tabs
@@ -330,8 +329,7 @@ export default function DashboardPage() {
     
     // Get relationships for this manager's sellers
     const managerRelationships = relationships.filter(
-      r => managerSellerIds.includes(r.seller_id) && 
-           r.status === 'must_keep'
+      r => managerSellerIds.includes(r.seller_id)
     );
     
     // Calculate total revenue using weighted percentages
@@ -397,11 +395,15 @@ export default function DashboardPage() {
       return acc;
     }, {} as Record<string, number>);
     
+    // Get unique accounts for this manager (ensure no duplicates across all sellers)
+    const uniqueAccountIds = Array.from(new Set(managerRelationships.map(rel => rel.account?.id).filter(Boolean)));
+    const uniqueAccounts = uniqueAccountIds.length;
+    
     return {
       ...manager,
-      totalAccounts: managerRelationships.length,
+      totalAccounts: uniqueAccounts,
       totalRevenue,
-      avgRevenuePerAccount: managerRelationships.length > 0 ? totalRevenue / managerRelationships.length : 0,
+      avgRevenuePerAccount: uniqueAccounts > 0 ? totalRevenue / uniqueAccounts : 0,
       sellerCount: managerSellers.length,
       divisionCounts,
       enterpriseAccounts: enterpriseSellers.length,
@@ -629,7 +631,7 @@ export default function DashboardPage() {
               <Card className="shadow-card">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">
-                    Total Accounts
+                    Total Assigned Accounts
                     {filtersActive && <span className="text-xs text-blue-600 ml-2">(filtered)</span>}
                   </CardTitle>
                   <Briefcase className="h-4 w-4 text-muted-foreground" />
@@ -754,7 +756,7 @@ export default function DashboardPage() {
               <Card className="shadow-card">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">
-                    Total Accounts
+                    Total Assigned Accounts
                     {filtersActive && <span className="text-xs text-blue-600 ml-2">(filtered)</span>}
                   </CardTitle>
                   <Briefcase className="h-4 w-4 text-muted-foreground" />
@@ -890,7 +892,7 @@ export default function DashboardPage() {
               
               <Card className="shadow-card">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Total Accounts</CardTitle>
+                  <CardTitle className="text-sm font-medium">Total Assigned Accounts</CardTitle>
                   <Briefcase className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
@@ -961,7 +963,7 @@ export default function DashboardPage() {
                       <CardContent className="space-y-3">
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <p className="text-sm text-muted-foreground">Total Accounts</p>
+                            <p className="text-sm text-muted-foreground">Total Assigned Accounts</p>
                             <p className="text-lg font-semibold text-primary">
                               {manager.totalAccounts}
                             </p>
