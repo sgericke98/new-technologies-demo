@@ -21,6 +21,7 @@ import {
 import Link from 'next/link';
 import { AuditLogTable } from '@/components/audit/AuditLogTable';
 import { AuditStats } from '@/components/audit/AuditStats';
+import { PageLoader } from '@/components/ui/loader';
 import { 
   getAuditLogs, 
   getAuditStats, 

@@ -30,8 +30,11 @@ type AccountRow = {
   account_name: string;
   industry: string | null;
   size: "enterprise" | "midmarket";
+  tier: string | null;
+  type: string | null;
   state: string | null;
   city: string | null;
+  country: string | null;
   latitude: number | null;
   longitude: number | null;
   current_division: "ESG" | "GDT" | "GVC" | "MSG US";
@@ -69,7 +72,26 @@ export async function importAccounts(file: File, userId?: string) {
     "GDT": "GDT",
     "GVC": "GVC",
     "MSG US": "MSG_US",
-    "MSG_US": "MSG_US",
+    "MSG_US": "MSG_US", // Support both formats
+    "Mixed": "MIXED", // Now support MIXED as a valid division
+  };
+
+  // Size mapping to handle case variations and invalid values
+  const sizeMap: Record<string, string> = {
+    "enterprise": "enterprise",
+    "Enterprise": "enterprise",
+    "ENTERPRISE": "enterprise",
+    "midmarket": "midmarket", 
+    "Midmarket": "midmarket",
+    "MIDMARKET": "midmarket",
+    "no_data": "no_data",
+    "No data": "no_data",
+    "No Data": "no_data",
+    "NO_DATA": "no_data",
+    "-": "no_data",
+    "": "no_data",
+    "N/A": "no_data",
+    "Unknown": "no_data",
   };
 
   // Prepare account data
@@ -80,22 +102,43 @@ export async function importAccounts(file: File, userId?: string) {
       if (!normalizedDivision) {
         throw new Error(`Invalid division: ${r.current_division}`);
       }
+      
+      const normalizedSize = sizeMap[r.size];
+      if (!normalizedSize) {
+        throw new Error(`Invalid size: ${r.size}. Must be 'enterprise' or 'midmarket'`);
+      }
+      
       return {
         name: r.account_name,
         industry: r.industry,
-        size: r.size,
+        size: normalizedSize as any,
+        tier: r.tier,
+        type: r.type,
         state: r.state,
         city: r.city,
+        country: r.country,
         lat: r.latitude,
         lng: r.longitude,
         current_division: normalizedDivision as any,
       };
     });
 
-  console.log(`Uploading ${accountsToUpsert.length} accounts in batches...`);
+  // Remove duplicates based on name (keep first occurrence)
+  const uniqueAccounts = accountsToUpsert.filter((account, index, self) => 
+    index === self.findIndex(a => a.name === account.name)
+  );
+
+  console.log(`📊 Total accounts found: ${accountsToUpsert.length}`);
+  console.log(`📊 Unique accounts after deduplication: ${uniqueAccounts.length}`);
+  
+  if (accountsToUpsert.length !== uniqueAccounts.length) {
+    console.log(`⚠️ Removed ${accountsToUpsert.length - uniqueAccounts.length} duplicate accounts`);
+  }
+
+  console.log(`Uploading ${uniqueAccounts.length} accounts in batches...`);
 
   // Batch upsert accounts
-  const accountChunks = chunk(accountsToUpsert, BATCH_SIZE);
+  const accountChunks = chunk(uniqueAccounts, BATCH_SIZE);
   const allAccounts: Array<{ id: string; name: string }> = [];
 
   for (let i = 0; i < accountChunks.length; i++) {
@@ -112,7 +155,7 @@ export async function importAccounts(file: File, userId?: string) {
   // Build name->id map
   const accountMap = new Map(allAccounts.map(a => [a.name, a.id]));
 
-  // Prepare revenue data
+  // Prepare revenue data (use original rows to get all revenue data)
   const revenuesToUpsert = rows
     .filter(r => r.account_name && accountMap.has(r.account_name))
     .map(r => ({
@@ -123,10 +166,22 @@ export async function importAccounts(file: File, userId?: string) {
       revenue_msg_us: r.revenue_MSG_US ?? 0,
     }));
 
-  console.log(`Uploading ${revenuesToUpsert.length} account revenues in batches...`);
+  // Remove duplicate revenues (keep first occurrence per account)
+  const uniqueRevenues = revenuesToUpsert.filter((revenue, index, self) => 
+    index === self.findIndex(r => r.account_id === revenue.account_id)
+  );
+
+  console.log(`📊 Total revenue records found: ${revenuesToUpsert.length}`);
+  console.log(`📊 Unique revenue records after deduplication: ${uniqueRevenues.length}`);
+  
+  if (revenuesToUpsert.length !== uniqueRevenues.length) {
+    console.log(`⚠️ Removed ${revenuesToUpsert.length - uniqueRevenues.length} duplicate revenue records`);
+  }
+
+  console.log(`Uploading ${uniqueRevenues.length} account revenues in batches...`);
 
   // Batch upsert revenues
-  const revenueChunks = chunk(revenuesToUpsert, BATCH_SIZE);
+  const revenueChunks = chunk(uniqueRevenues, BATCH_SIZE);
 
   for (let i = 0; i < revenueChunks.length; i++) {
     console.log(`Processing revenues batch ${i + 1}/${revenueChunks.length}...`);
@@ -137,7 +192,7 @@ export async function importAccounts(file: File, userId?: string) {
     if (error) throw new Error(`Failed to upsert revenues batch ${i + 1}: ${error.message}`);
   }
 
-  console.log(`✓ Successfully imported ${accountsToUpsert.length} accounts with revenues`);
+  console.log(`✓ Successfully imported ${uniqueAccounts.length} accounts with ${uniqueRevenues.length} revenue records`);
 
   // Log audit event
   if (userId) {
@@ -149,10 +204,10 @@ export async function importAccounts(file: File, userId?: string) {
       null,
       {
         import_type: 'accounts',
-        records_count: accountsToUpsert.length,
+        records_count: uniqueAccounts.length,
         file_name: file.name,
         file_size: file.size,
-        revenue_records_count: revenuesToUpsert.length,
+        revenue_records_count: uniqueRevenues.length,
       }
     );
     
@@ -168,9 +223,9 @@ type SellerRow = {
   industry_specialty: string | null;
   state: string | null;
   city: string | null;
+  country: string | null;
   latitude: number | null;
   longitude: number | null;
-  manager_name?: string | null;
   tenure_months?: number | null;
 };
 
@@ -187,25 +242,35 @@ export async function importSellers(file: File, userId?: string) {
     }
   }
 
-  // Prefetch all managers
-  const { data: managers, error: mgrErr } = await supabase
-    .from("managers")
-    .select("id,name");
-
-  if (mgrErr) throw new Error(`Failed to fetch managers: ${mgrErr.message}`);
-
-  const managerMap = new Map(managers?.map(m => [m.name.toLowerCase(), m.id]) ?? []);
-
   const divisionMap: Record<string, string> = {
     "ESG": "ESG",
     "GDT": "GDT",
     "GVC": "GVC",
     "MSG US": "MSG_US",
     "MSG_US": "MSG_US",
+    "Mixed": "MIXED", // Now support MIXED as a valid division
+  };
+
+  // Size mapping to handle case variations and invalid values
+  const sizeMap: Record<string, string> = {
+    "enterprise": "enterprise",
+    "Enterprise": "enterprise",
+    "ENTERPRISE": "enterprise",
+    "midmarket": "midmarket", 
+    "Midmarket": "midmarket",
+    "MIDMARKET": "midmarket",
+    "no_data": "no_data",
+    "No data": "no_data",
+    "No Data": "no_data",
+    "NO_DATA": "no_data",
+    // Handle invalid/missing values - default to midmarket
+    "-": "midmarket",
+    "": "midmarket",
+    "N/A": "midmarket",
+    "Unknown": "midmarket",
   };
 
   // Prepare seller data
-  const missingManagers = new Set<string>();
   const sellersToUpsert = rows
     .filter(r => r.seller_name)
     .map(r => {
@@ -214,31 +279,25 @@ export async function importSellers(file: File, userId?: string) {
         throw new Error(`Invalid division: ${r.division}`);
       }
 
-      let managerId: string | null = null;
-      if (r.manager_name) {
-        managerId = managerMap.get(r.manager_name.toLowerCase()) ?? null;
-        if (!managerId) {
-          missingManagers.add(r.manager_name);
-        }
+      const normalizedSize = sizeMap[r.size];
+      if (!normalizedSize) {
+        throw new Error(`Invalid size: ${r.size}. Must be 'enterprise' or 'midmarket'`);
       }
 
       return {
         name: r.seller_name,
         division: normalizedDivision as any,
-        size: r.size,
+        size: normalizedSize as any,
         industry_specialty: r.industry_specialty,
         state: r.state,
         city: r.city,
+        country: r.country,
         lat: r.latitude,
         lng: r.longitude,
         tenure_months: r.tenure_months ?? null,
-        manager_id: managerId,
+        manager_id: null, // Will be assigned via Manager_Team tab
       };
     });
-
-  if (missingManagers.size > 0) {
-    console.warn(`Warning: Managers not found: ${Array.from(missingManagers).join(", ")}`);
-  }
 
   console.log(`Uploading ${sellersToUpsert.length} sellers in batches...`);
 
@@ -269,7 +328,6 @@ export async function importSellers(file: File, userId?: string) {
         records_count: sellersToUpsert.length,
         file_name: file.name,
         file_size: file.size,
-        missing_managers: Array.from(missingManagers),
       }
     );
     
@@ -281,23 +339,29 @@ export async function importSellers(file: File, userId?: string) {
 type RelRow = {
   account_name: string;
   seller_name: string;
-  pct_ESG?: number | null;
-  pct_GDT?: number | null;
-  pct_GVC?: number | null;
-  pct_MSG_US?: number | null;
-  status: "approval for pinning" | "pinned" | "approval for assigning" | "assigned" | "approval_for_pinning" | "approval_for_assigning";
-  last_actor_email?: string | null;
+  status: "approval for pinning" | "pinned" | "approval for assigning" | "assigned" | "up for debate" | "peeled" | "available" | "must keep" | "for discussion" | "to be peeled" | "approval_for_pinning" | "approval_for_assigning" | "up_for_debate" | "must_keep" | "for_discussion" | "to_be_peeled";
 };
 
 const statusMap: Record<string, string> = {
-  // User-friendly names
+  // User-friendly names (with spaces)
   "approval for pinning": "approval_for_pinning",
   "pinned": "pinned",
   "approval for assigning": "approval_for_assigning",
   "assigned": "assigned",
-  // Database enum values (in case Excel contains these directly)
+  "up for debate": "up_for_debate",
+  "peeled": "peeled",
+  "available": "available",
+  "must keep": "must_keep",
+  "for discussion": "for_discussion",
+  "to be peeled": "to_be_peeled",
+  
+  // Database enum values (underscore format)
   "approval_for_pinning": "approval_for_pinning",
   "approval_for_assigning": "approval_for_assigning",
+  "up_for_debate": "up_for_debate",
+  "must_keep": "must_keep",
+  "for_discussion": "for_discussion",
+  "to_be_peeled": "to_be_peeled",
 };
 
 export async function importRelationshipMap(file: File, userId?: string) {
@@ -316,29 +380,141 @@ export async function importRelationshipMap(file: File, userId?: string) {
   // Prefetch accounts, sellers, and profiles
   console.log("Prefetching accounts, sellers, and profiles...");
 
-  const [accountsRes, sellersRes, profilesRes] = await Promise.all([
-    supabase.from("accounts").select("id,name"),
+  // Fetch all accounts with pagination to get all 7714+ records
+  console.log("📥 Fetching all accounts with pagination...");
+  let allAccounts: any[] = [];
+  let from = 0;
+  const limit = 1000;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from("accounts")
+      .select("id,name")
+      .range(from, from + limit - 1);
+    
+    if (error) throw new Error(`Failed to fetch accounts: ${error.message}`);
+    
+    if (data && data.length > 0) {
+      allAccounts = allAccounts.concat(data);
+      from += limit;
+      console.log(`📥 Fetched ${data.length} accounts (total: ${allAccounts.length})`);
+    } else {
+      hasMore = false;
+    }
+    
+    // Safety check to prevent infinite loop
+    if (from > 10000) {
+      console.warn("⚠️ Stopping pagination at 10,000 records to prevent infinite loop");
+      break;
+    }
+  }
+  
+  console.log(`📊 Total accounts fetched: ${allAccounts.length}`);
+  
+  const [sellersRes, profilesRes] = await Promise.all([
     supabase.from("sellers").select("id,name"),
     supabase.from("profiles").select("id,email"),
   ]);
 
-  if (accountsRes.error) throw new Error(`Failed to fetch accounts: ${accountsRes.error.message}`);
   if (sellersRes.error) throw new Error(`Failed to fetch sellers: ${sellersRes.error.message}`);
   if (profilesRes.error) throw new Error(`Failed to fetch profiles: ${profilesRes.error.message}`);
 
-  const accountMap = new Map(accountsRes.data?.map(a => [a.name, a.id]) ?? []);
+  console.log(`📊 Raw sellers fetched: ${sellersRes.data?.length || 0}`);
+  
+  // Debug: Check if Cannon account is in the raw data
+  const cannonInRawData = allAccounts.find(a => a.name === "Cannon Instrument Company");
+  console.log(`🔍 Debug: "Cannon Instrument Company" in raw accounts data: ${!!cannonInRawData}`);
+  if (cannonInRawData) {
+    console.log(`🔍 Debug: Raw Cannon account:`, cannonInRawData);
+  }
+
+  const accountMap = new Map(allAccounts.map(a => [a.name, a.id]));
   const sellerMap = new Map(sellersRes.data?.map(s => [s.name, s.id]) ?? []);
   const profileMap = new Map(profilesRes.data?.map(p => [p.email.toLowerCase(), p.id]) ?? []);
+
+  console.log(`📊 Found ${accountMap.size} accounts and ${sellerMap.size} sellers for relationship mapping`);
+  console.log("📋 Sample account names:", Array.from(accountMap.keys()).slice(0, 5));
+  console.log("📋 Sample seller names:", Array.from(sellerMap.keys()).slice(0, 5));
+  
+  // Debug: Check if specific account exists
+  const cannonAccount = accountMap.get("Cannon Instrument Company");
+  console.log(`🔍 Debug: "Cannon Instrument Company" found in accountMap: ${!!cannonAccount}`);
+  if (cannonAccount) {
+    console.log(`🔍 Debug: "Cannon Instrument Company" ID: ${cannonAccount}`);
+  }
 
   // Prepare relationship data
   const relationshipsToUpsert = rows
     .filter(r => r.account_name && r.seller_name)
     .map(r => {
-      const accountId = accountMap.get(r.account_name);
-      const sellerId = sellerMap.get(r.seller_name);
+      // Try exact match first
+      let accountId = accountMap.get(r.account_name);
+      let sellerId = sellerMap.get(r.seller_name);
+      
+      // If not found, try case-insensitive match
+      if (!accountId) {
+        const exactAccount = Array.from(accountMap.keys()).find(name => 
+          name.toLowerCase() === r.account_name.toLowerCase()
+        );
+        if (exactAccount) {
+          accountId = accountMap.get(exactAccount);
+          console.log(`🔧 Fixed case mismatch: "${r.account_name}" → "${exactAccount}"`);
+        }
+      }
+      
+      if (!sellerId) {
+        const exactSeller = Array.from(sellerMap.keys()).find(name => 
+          name.toLowerCase() === r.seller_name.toLowerCase()
+        );
+        if (exactSeller) {
+          sellerId = sellerMap.get(exactSeller);
+          console.log(`🔧 Fixed case mismatch: "${r.seller_name}" → "${exactSeller}"`);
+        }
+      }
 
       if (!accountId || !sellerId) {
-        console.warn(`Skipping relationship: account "${r.account_name}" or seller "${r.seller_name}" not found`);
+        console.warn(`⚠️ Skipping relationship: account "${r.account_name}" or seller "${r.seller_name}" not found`);
+        console.warn(`🔍 Looking for account: "${r.account_name}" (found: ${!!accountId})`);
+        console.warn(`🔍 Looking for seller: "${r.seller_name}" (found: ${!!sellerId})`);
+        
+        // Show similar names for debugging
+        if (!accountId) {
+          const similarAccounts = Array.from(accountMap.keys()).filter(name => 
+            name.toLowerCase().includes(r.account_name.toLowerCase()) || 
+            r.account_name.toLowerCase().includes(name.toLowerCase())
+          );
+          if (similarAccounts.length > 0) {
+            console.warn(`💡 Similar account names found:`, similarAccounts.slice(0, 3));
+          }
+          
+          // Check for exact match with different case
+          const exactMatch = Array.from(accountMap.keys()).find(name => 
+            name.toLowerCase() === r.account_name.toLowerCase()
+          );
+          if (exactMatch) {
+            console.warn(`🔍 Case mismatch found! Looking for: "${r.account_name}" but found: "${exactMatch}"`);
+          }
+          
+          // Check for extra spaces or characters
+          const trimmedMatch = Array.from(accountMap.keys()).find(name => 
+            name.trim().toLowerCase() === r.account_name.trim().toLowerCase()
+          );
+          if (trimmedMatch) {
+            console.warn(`🔍 Whitespace mismatch found! Looking for: "${r.account_name}" but found: "${trimmedMatch}"`);
+          }
+        }
+        
+        if (!sellerId) {
+          const similarSellers = Array.from(sellerMap.keys()).filter(name => 
+            name.toLowerCase().includes(r.seller_name.toLowerCase()) || 
+            r.seller_name.toLowerCase().includes(name.toLowerCase())
+          );
+          if (similarSellers.length > 0) {
+            console.warn(`💡 Similar seller names found:`, similarSellers.slice(0, 3));
+          }
+        }
+        
         return null;
       }
 
@@ -349,20 +525,10 @@ export async function importRelationshipMap(file: File, userId?: string) {
         throw new Error(`Invalid status: ${r.status}`);
       }
 
-      let lastActorUserId: string | null = null;
-      if (r.last_actor_email) {
-        lastActorUserId = profileMap.get(r.last_actor_email.toLowerCase()) ?? null;
-      }
-
       return {
         account_id: accountId,
         seller_id: sellerId,
-        pct_esg: r.pct_ESG ?? 0,
-        pct_gdt: r.pct_GDT ?? 0,
-        pct_gvc: r.pct_GVC ?? 0,
-        pct_msg_us: r.pct_MSG_US ?? 0,
         status: mappedStatus as any,
-        last_actor_user_id: lastActorUserId,
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
@@ -399,13 +565,9 @@ export async function importRelationshipMap(file: File, userId?: string) {
   // Create snapshot for original_relationships table
   console.log(`Creating snapshot of ${relationshipsToUpsert.length} original relationships...`);
   
-  const snapshotRows = relationshipsToUpsert.map(({ account_id, seller_id, pct_esg, pct_gdt, pct_gvc, pct_msg_us }) => ({
+  const snapshotRows = relationshipsToUpsert.map(({ account_id, seller_id }) => ({
     account_id,
     seller_id,
-    pct_esg,
-    pct_gdt,
-    pct_gvc,
-    pct_msg_us,
   }));
 
   const snapshotChunks = chunk(snapshotRows, BATCH_SIZE);
@@ -476,6 +638,7 @@ export async function importManagers(file: File, userId?: string) {
 
   const profileMap = new Map(profiles?.map(p => [p.email.toLowerCase(), p.id]) ?? []);
 
+  // Filter and validate data, then remove duplicates
   const managersToUpsert = rows
     .filter(r => r.manager_name && r.manager_email)
     .map(r => {
@@ -489,9 +652,21 @@ export async function importManagers(file: File, userId?: string) {
       };
     });
 
-  console.log(`Uploading ${managersToUpsert.length} managers in batches...`);
+  // Remove duplicates based on user_id (keep first occurrence)
+  const uniqueManagers = managersToUpsert.filter((manager, index, self) => 
+    index === self.findIndex(m => m.user_id === manager.user_id)
+  );
 
-  const managerChunks = chunk(managersToUpsert, BATCH_SIZE);
+  console.log(`📊 Total managers found: ${managersToUpsert.length}`);
+  console.log(`📊 Unique managers after deduplication: ${uniqueManagers.length}`);
+  
+  if (managersToUpsert.length !== uniqueManagers.length) {
+    console.log(`⚠️ Removed ${managersToUpsert.length - uniqueManagers.length} duplicate managers`);
+  }
+
+  console.log(`Uploading ${uniqueManagers.length} managers in batches...`);
+
+  const managerChunks = chunk(uniqueManagers, BATCH_SIZE);
 
   for (let i = 0; i < managerChunks.length; i++) {
     console.log(`Processing managers batch ${i + 1}/${managerChunks.length}...`);
@@ -502,7 +677,7 @@ export async function importManagers(file: File, userId?: string) {
     if (error) throw new Error(`Failed to upsert managers batch ${i + 1}: ${error.message}`);
   }
 
-  console.log(`✓ Successfully imported ${managersToUpsert.length} managers`);
+  console.log(`✓ Successfully imported ${uniqueManagers.length} managers`);
 
   // Log audit event
   if (userId) {
@@ -514,7 +689,7 @@ export async function importManagers(file: File, userId?: string) {
       null,
       {
         import_type: 'managers',
-        records_count: managersToUpsert.length,
+        records_count: uniqueManagers.length,
         file_name: file.name,
         file_size: file.size,
       }
@@ -546,19 +721,52 @@ export async function importManagerTeam(file: File, userId?: string) {
   // Prefetch managers and sellers
   console.log("Prefetching managers and sellers...");
 
-  const [managersRes, sellersRes] = await Promise.all([
-    supabase.from("managers").select("id,name"),
-    supabase.from("sellers").select("id,name"),
-  ]);
+  // Fetch all sellers with pagination to get all records
+  console.log("📥 Fetching all sellers with pagination...");
+  let allSellers: any[] = [];
+  let from = 0;
+  const limit = 1000;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from("sellers")
+      .select("id,name")
+      .range(from, from + limit - 1);
+    
+    if (error) throw new Error(`Failed to fetch sellers: ${error.message}`);
+    
+    if (data && data.length > 0) {
+      allSellers = allSellers.concat(data);
+      from += limit;
+      console.log(`📥 Fetched ${data.length} sellers (total: ${allSellers.length})`);
+    } else {
+      hasMore = false;
+    }
+    
+    // Safety check to prevent infinite loop
+    if (from > 10000) {
+      console.warn("⚠️ Stopping pagination at 10,000 records to prevent infinite loop");
+      break;
+    }
+  }
+  
+  console.log(`📊 Total sellers fetched: ${allSellers.length}`);
+
+  const managersRes = await supabase.from("managers").select("id,name");
 
   if (managersRes.error) throw new Error(`Failed to fetch managers: ${managersRes.error.message}`);
-  if (sellersRes.error) throw new Error(`Failed to fetch sellers: ${sellersRes.error.message}`);
 
   const managerMap = new Map(managersRes.data?.map(m => [m.name.toLowerCase(), m.id]) ?? []);
-  const sellerMap = new Map(sellersRes.data?.map(s => [s.name, s.id]) ?? []);
+  const sellerMap = new Map(allSellers.map(s => [s.name, s.id]));
 
-  // Collect missing managers
+  console.log(`📊 Found ${managerMap.size} managers and ${sellerMap.size} sellers for team assignment`);
+  console.log("📋 Sample manager names:", Array.from(managerMap.keys()).slice(0, 5));
+  console.log("📋 Sample seller names:", Array.from(sellerMap.keys()).slice(0, 5));
+
+  // Collect missing managers and sellers for reporting
   const missingManagers = new Set<string>();
+  const missingSellers = new Set<string>();
   const updates: Array<{ sellerId: string; managerId: string }> = [];
 
   for (const r of rows) {
@@ -569,19 +777,47 @@ export async function importManagerTeam(file: File, userId?: string) {
 
     if (!managerId) {
       missingManagers.add(r.manager_name);
+      console.warn(`⚠️ Manager "${r.manager_name}" not found, skipping assignment`);
       continue;
     }
 
     if (!sellerId) {
-      console.warn(`Seller "${r.seller_name}" not found, skipping assignment`);
+      missingSellers.add(r.seller_name);
+      console.warn(`⚠️ Seller "${r.seller_name}" not found, skipping assignment`);
+      
+      // Show similar seller names for debugging
+      const similarSellers = Array.from(sellerMap.keys()).filter(name => 
+        name.toLowerCase().includes(r.seller_name.toLowerCase()) || 
+        r.seller_name.toLowerCase().includes(name.toLowerCase())
+      );
+      if (similarSellers.length > 0) {
+        console.warn(`💡 Similar seller names found:`, similarSellers.slice(0, 3));
+      }
+      
+      // Check for exact match with different case
+      const exactMatch = Array.from(sellerMap.keys()).find(name => 
+        name.toLowerCase() === r.seller_name.toLowerCase()
+      );
+      if (exactMatch) {
+        console.warn(`🔍 Case mismatch found! Looking for: "${r.seller_name}" but found: "${exactMatch}"`);
+      }
+      
       continue;
     }
 
     updates.push({ sellerId, managerId });
   }
 
+  // Report missing data
   if (missingManagers.size > 0) {
+    console.error(`❌ Missing Managers (${missingManagers.size}):`, Array.from(missingManagers));
     throw new Error(`Managers not found (must run Managers.xlsx import first): ${Array.from(missingManagers).join(", ")}`);
+  }
+  
+  if (missingSellers.size > 0) {
+    console.error(`❌ Missing Sellers (${missingSellers.size}):`, Array.from(missingSellers));
+    console.warn(`⚠️ These sellers are referenced in Manager_Team but don't exist in the Sellers sheet`);
+    console.warn(`💡 Please check your Excel file for data consistency`);
   }
 
   console.log(`Assigning ${updates.length} sellers to managers in batches...`);
@@ -655,8 +891,11 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
           account_name: "Example Corp",
           industry: "Technology",
           size: "enterprise",
+          tier: "Tier 1",
+          type: "Strategic",
           state: "CA",
           city: "San Francisco",
+          country: "United States",
           latitude: 37.7749,
           longitude: -122.4194,
           current_division: "ESG",
@@ -679,9 +918,9 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
           industry_specialty: "Financial Services",
           state: "NY",
           city: "New York",
+          country: "United States",
           latitude: 40.7128,
           longitude: -74.0060,
-          manager_name: "Jane Manager",
           tenure_months: 24
         }
       ];
@@ -705,12 +944,7 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
         {
           account_name: "Example Corp",
           seller_name: "John Smith",
-          pct_ESG: 50,
-          pct_GDT: 30,
-          pct_GVC: 20,
-          pct_MSG_US: 0,
-          status: "assigned",
-          last_actor_email: "jane.manager@company.com"
+          status: "assigned"
         }
       ];
       filename = "RelationshipMap_Template.xlsx";
@@ -757,8 +991,8 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
   
   if (type === "sellers") {
     const noteRow = [
-      "NOTE: manager_name is optional and will be mapped to manager_id in the database.",
-      "If specified, the manager must already exist in the system."
+      "NOTE: Manager assignments are handled via the Manager_Team tab.",
+      "Use the Manager_Team tab to assign sellers to managers after importing sellers."
     ];
     XLSX.utils.sheet_add_aoa(ws, [noteRow], { origin: -1 });
   }
@@ -787,8 +1021,11 @@ export function downloadComprehensiveTemplate() {
       account_name: "Example Corp",
       industry: "Technology",
       size: "enterprise",
+      tier: "Tier 1",
+      type: "Strategic",
       state: "CA",
       city: "San Francisco",
+      country: "United States",
       latitude: 37.7749,
       longitude: -122.4194,
       current_division: "ESG",
@@ -801,8 +1038,11 @@ export function downloadComprehensiveTemplate() {
       account_name: "Tech Solutions Inc",
       industry: "Financial Services",
       size: "midmarket",
+      tier: "Tier 2",
+      type: "Growth",
       state: "NY",
       city: "New York",
+      country: "United States",
       latitude: 40.7128,
       longitude: -74.0060,
       current_division: "GDT",
@@ -825,9 +1065,9 @@ export function downloadComprehensiveTemplate() {
       industry_specialty: "Financial Services",
       state: "NY",
       city: "New York",
+      country: "United States",
       latitude: 40.7128,
       longitude: -74.0060,
-      manager_name: "Jane Manager",
       tenure_months: 24
     },
     {
@@ -837,9 +1077,9 @@ export function downloadComprehensiveTemplate() {
       industry_specialty: "Technology",
       state: "CA",
       city: "San Francisco",
+      country: "United States",
       latitude: 37.7749,
       longitude: -122.4194,
-      manager_name: "Mike Director",
       tenure_months: 18
     }
   ];
@@ -867,22 +1107,12 @@ export function downloadComprehensiveTemplate() {
     {
       account_name: "Example Corp",
       seller_name: "John Smith",
-      pct_ESG: 50,
-      pct_GDT: 30,
-      pct_GVC: 20,
-      pct_MSG_US: 0,
-      status: "assigned",
-      last_actor_email: "jane.manager@company.com"
+      status: "assigned"
     },
     {
       account_name: "Tech Solutions Inc",
       seller_name: "Sarah Johnson",
-      pct_ESG: 0,
-      pct_GDT: 80,
-      pct_GVC: 20,
-      pct_MSG_US: 0,
-      status: "pinned",
-      last_actor_email: "mike.director@company.com"
+      status: "pinned"
     }
   ];
   
@@ -937,9 +1167,7 @@ export function downloadComprehensiveTemplate() {
     ["IMPORTANT NOTES:"],
     ["• Manager emails must match existing user profiles"],
     ["• Account and seller names must match exactly between tabs"],
-    ["• Revenue percentages should add up to 100% for each relationship"],
-    ["• Latitude/longitude are optional but recommended for mapping"],
-    ["• All percentages should be numbers (0-100), not decimals"]
+    ["• Latitude/longitude are optional but recommended for mapping"]
   ];
   
   const instructionsWs = XLSX.utils.json_to_sheet(instructionsData);
@@ -952,9 +1180,15 @@ export function downloadComprehensiveTemplate() {
 // ========== Comprehensive Import Function ==========
 
 export async function importComprehensiveData(file: File, userId?: string) {
+  console.log("🚀 Starting Comprehensive Data Import");
+  console.log("📁 File:", file.name, "Size:", file.size, "bytes");
+  console.log("👤 User ID:", userId);
+  console.log("⏰ Start Time:", new Date().toISOString());
+  
   const wb = await readSheet(file);
   
-  console.log("Available sheets:", wb.SheetNames);
+  console.log("📊 Available sheets:", wb.SheetNames);
+  console.log("📋 Sheet count:", wb.SheetNames.length);
   
   const results = {
     accounts: { imported: 0, errors: [] as string[] },
@@ -967,111 +1201,266 @@ export async function importComprehensiveData(file: File, userId?: string) {
   try {
     // 1. Import Managers first (required for sellers)
     if (wb.SheetNames.includes("Managers")) {
-      console.log("Importing managers...");
+      console.log("👥 STEP 1: Processing Managers Tab");
+      console.log("📋 Found Managers sheet in Excel file");
       try {
+        // Truncate managers table first
+        console.log("🗑️ Truncating managers table...");
+        const { error: truncateError } = await supabase
+          .from("managers")
+          .delete()
+          .neq("id", "00000000-0000-0000-0000-000000000000"); // Delete all records
+        
+        if (truncateError) {
+          console.error("❌ Failed to truncate managers table:", truncateError);
+          throw new Error(`Failed to truncate managers table: ${truncateError.message}`);
+        }
+        console.log("✅ Managers table truncated successfully");
+
         const managersData = sheetToJson<ManagerRow>(wb, "Managers");
+        console.log("📊 Managers data extracted:", managersData.length, "records");
+        console.log("📝 Sample manager data:", managersData.slice(0, 2));
+        
         if (managersData.length > 0) {
+          console.log("🔄 Creating temporary file for managers import...");
           // Create a temporary file for managers import
           const tempWb = XLSX.utils.book_new();
           const tempWs = XLSX.utils.json_to_sheet(managersData);
           XLSX.utils.book_append_sheet(tempWb, tempWs, "Managers");
           const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_managers.xlsx");
           
+          console.log("📤 Starting managers import process...");
           await importManagers(tempFile, userId);
           results.managers.imported = managersData.length;
-          console.log(`✓ Imported ${managersData.length} managers`);
+          console.log(`✅ Successfully imported ${managersData.length} managers`);
+        } else {
+          console.log("⚠️ No manager data found in Managers sheet");
         }
       } catch (error) {
+        console.error("❌ Manager import failed:", error);
         results.managers.errors.push(`Manager import failed: ${error}`);
         console.error("Manager import error:", error);
       }
+    } else {
+      console.log("⚠️ No Managers sheet found in Excel file");
     }
     
     // 2. Import Accounts
     if (wb.SheetNames.includes("Accounts")) {
-      console.log("Importing accounts...");
+      console.log("🏢 STEP 2: Processing Accounts Tab");
+      console.log("📋 Found Accounts sheet in Excel file");
       try {
+        // Truncate accounts and account_revenues tables first
+        console.log("🗑️ Truncating accounts and account_revenues tables...");
+        
+        // Delete account_revenues first (foreign key constraint)
+        console.log("🗑️ Deleting account_revenues records...");
+        const { error: revenueTruncateError } = await supabase
+          .from("account_revenues")
+          .delete()
+          .neq("account_id", "00000000-0000-0000-0000-000000000000");
+        
+        if (revenueTruncateError) {
+          console.error("❌ Failed to truncate account_revenues table:", revenueTruncateError);
+          throw new Error(`Failed to truncate account_revenues table: ${revenueTruncateError.message}`);
+        }
+        console.log("✅ Account_revenues table truncated successfully");
+        
+        // Delete accounts
+        console.log("🗑️ Deleting accounts records...");
+        const { error: accountTruncateError } = await supabase
+          .from("accounts")
+          .delete()
+          .neq("id", "00000000-0000-0000-0000-000000000000");
+        
+        if (accountTruncateError) {
+          console.error("❌ Failed to truncate accounts table:", accountTruncateError);
+          throw new Error(`Failed to truncate accounts table: ${accountTruncateError.message}`);
+        }
+        
+        console.log("✅ Accounts and account_revenues tables truncated successfully");
+
         const accountsData = sheetToJson<AccountRow>(wb, "Accounts");
+        console.log("📊 Accounts data extracted:", accountsData.length, "records");
+        console.log("📝 Sample account data:", accountsData.slice(0, 2));
+        
         if (accountsData.length > 0) {
+          console.log("🔄 Creating temporary file for accounts import...");
           const tempWb = XLSX.utils.book_new();
           const tempWs = XLSX.utils.json_to_sheet(accountsData);
           XLSX.utils.book_append_sheet(tempWb, tempWs, "Accounts");
           const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_accounts.xlsx");
           
+          console.log("📤 Starting accounts import process...");
           await importAccounts(tempFile, userId);
           results.accounts.imported = accountsData.length;
-          console.log(`✓ Imported ${accountsData.length} accounts`);
+          console.log(`✅ Successfully imported ${accountsData.length} accounts`);
+        } else {
+          console.log("⚠️ No account data found in Accounts sheet");
         }
       } catch (error) {
+        console.error("❌ Account import failed:", error);
         results.accounts.errors.push(`Account import failed: ${error}`);
         console.error("Account import error:", error);
       }
+    } else {
+      console.log("⚠️ No Accounts sheet found in Excel file");
     }
     
     // 3. Import Sellers
     if (wb.SheetNames.includes("Sellers")) {
-      console.log("Importing sellers...");
+      console.log("👨‍💼 STEP 3: Processing Sellers Tab");
+      console.log("📋 Found Sellers sheet in Excel file");
       try {
+        // Truncate sellers table first
+        console.log("🗑️ Truncating sellers table...");
+        const { error: truncateError } = await supabase
+          .from("sellers")
+          .delete()
+          .neq("id", "00000000-0000-0000-0000-000000000000");
+        
+        if (truncateError) {
+          console.error("❌ Failed to truncate sellers table:", truncateError);
+          throw new Error(`Failed to truncate sellers table: ${truncateError.message}`);
+        }
+        console.log("✅ Sellers table truncated successfully");
+
         const sellersData = sheetToJson<SellerRow>(wb, "Sellers");
+        console.log("📊 Sellers data extracted:", sellersData.length, "records");
+        console.log("📝 Sample seller data:", sellersData.slice(0, 2));
+        
         if (sellersData.length > 0) {
+          console.log("🔄 Creating temporary file for sellers import...");
           const tempWb = XLSX.utils.book_new();
           const tempWs = XLSX.utils.json_to_sheet(sellersData);
           XLSX.utils.book_append_sheet(tempWb, tempWs, "Sellers");
           const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_sellers.xlsx");
           
+          console.log("📤 Starting sellers import process...");
           await importSellers(tempFile, userId);
           results.sellers.imported = sellersData.length;
-          console.log(`✓ Imported ${sellersData.length} sellers`);
+          console.log(`✅ Successfully imported ${sellersData.length} sellers`);
+        } else {
+          console.log("⚠️ No seller data found in Sellers sheet");
         }
       } catch (error) {
+        console.error("❌ Seller import failed:", error);
         results.sellers.errors.push(`Seller import failed: ${error}`);
         console.error("Seller import error:", error);
       }
+    } else {
+      console.log("⚠️ No Sellers sheet found in Excel file");
     }
     
     // 4. Import Relationship Map
     if (wb.SheetNames.includes("Relationship_Map")) {
-      console.log("Importing relationships...");
+      console.log("🔗 STEP 4: Processing Relationship_Map Tab");
+      console.log("📋 Found Relationship_Map sheet in Excel file");
       try {
+        // Truncate relationship_maps and original_relationships tables first
+        console.log("🗑️ Truncating relationship_maps and original_relationships tables...");
+        
+        // Delete original_relationships first (foreign key constraint)
+        console.log("🗑️ Deleting original_relationships records...");
+        const { error: originalTruncateError } = await supabase
+          .from("original_relationships")
+          .delete()
+          .neq("account_id", "00000000-0000-0000-0000-000000000000");
+        
+        if (originalTruncateError) {
+          console.error("❌ Failed to truncate original_relationships table:", originalTruncateError);
+          throw new Error(`Failed to truncate original_relationships table: ${originalTruncateError.message}`);
+        }
+        console.log("✅ Original_relationships table truncated successfully");
+        
+        // Delete relationship_maps
+        console.log("🗑️ Deleting relationship_maps records...");
+        const { error: relationshipTruncateError } = await supabase
+          .from("relationship_maps")
+          .delete()
+          .neq("account_id", "00000000-0000-0000-0000-000000000000");
+        
+        if (relationshipTruncateError) {
+          console.error("❌ Failed to truncate relationship_maps table:", relationshipTruncateError);
+          throw new Error(`Failed to truncate relationship_maps table: ${relationshipTruncateError.message}`);
+        }
+        
+        console.log("✅ Relationship_maps and original_relationships tables truncated successfully");
+
         const relationshipData = sheetToJson<RelRow>(wb, "Relationship_Map");
+        console.log("📊 Relationship data extracted:", relationshipData.length, "records");
+        console.log("📝 Sample relationship data:", relationshipData.slice(0, 2));
+        
         if (relationshipData.length > 0) {
+          console.log("🔄 Creating temporary file for relationships import...");
           const tempWb = XLSX.utils.book_new();
           const tempWs = XLSX.utils.json_to_sheet(relationshipData);
           XLSX.utils.book_append_sheet(tempWb, tempWs, "RelationshipMap");
           const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_relationships.xlsx");
           
+          console.log("📤 Starting relationships import process...");
           await importRelationshipMap(tempFile, userId);
           results.relationships.imported = relationshipData.length;
-          console.log(`✓ Imported ${relationshipData.length} relationships`);
+          console.log(`✅ Successfully imported ${relationshipData.length} relationships`);
+        } else {
+          console.log("⚠️ No relationship data found in Relationship_Map sheet");
         }
       } catch (error) {
+        console.error("❌ Relationship import failed:", error);
         results.relationships.errors.push(`Relationship import failed: ${error}`);
         console.error("Relationship import error:", error);
       }
+    } else {
+      console.log("⚠️ No Relationship_Map sheet found in Excel file");
     }
     
     // 5. Import Manager Teams
     if (wb.SheetNames.includes("Manager_Team")) {
-      console.log("Importing manager teams...");
+      console.log("👥 STEP 5: Processing Manager_Team Tab");
+      console.log("📋 Found Manager_Team sheet in Excel file");
       try {
+        // Reset all seller manager_id fields to null first
+        console.log("🔄 Resetting seller manager assignments...");
+        const { error: resetError } = await supabase
+          .from("sellers")
+          .update({ manager_id: null })
+          .not("manager_id", "is", null);
+        
+        if (resetError) {
+          console.error("❌ Failed to reset seller manager assignments:", resetError);
+          throw new Error(`Failed to reset seller manager assignments: ${resetError.message}`);
+        }
+        console.log("✅ Seller manager assignments reset successfully");
+
         const managerTeamData = sheetToJson<ManagerTeamRow>(wb, "Manager_Team");
+        console.log("📊 Manager team data extracted:", managerTeamData.length, "records");
+        console.log("📝 Sample manager team data:", managerTeamData.slice(0, 2));
+        
         if (managerTeamData.length > 0) {
+          console.log("🔄 Creating temporary file for manager teams import...");
           const tempWb = XLSX.utils.book_new();
           const tempWs = XLSX.utils.json_to_sheet(managerTeamData);
           XLSX.utils.book_append_sheet(tempWb, tempWs, "ManagerTeam");
           const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_manager_teams.xlsx");
           
+          console.log("📤 Starting manager teams import process...");
           await importManagerTeam(tempFile, userId);
           results.managerTeams.imported = managerTeamData.length;
-          console.log(`✓ Imported ${managerTeamData.length} manager team assignments`);
+          console.log(`✅ Successfully imported ${managerTeamData.length} manager team assignments`);
+        } else {
+          console.log("⚠️ No manager team data found in Manager_Team sheet");
         }
       } catch (error) {
+        console.error("❌ Manager team import failed:", error);
         results.managerTeams.errors.push(`Manager team import failed: ${error}`);
         console.error("Manager team import error:", error);
       }
+    } else {
+      console.log("⚠️ No Manager_Team sheet found in Excel file");
     }
     
     // Log comprehensive audit event
+    console.log("📝 Logging comprehensive audit event...");
     if (userId) {
       const auditData = createAuditLogData(
         userId,
@@ -1088,12 +1477,38 @@ export async function importComprehensiveData(file: File, userId?: string) {
       );
       
       await logAuditEvent(auditData);
+      console.log("✅ Audit event logged successfully");
+    }
+    
+    // Final summary
+    console.log("🎉 COMPREHENSIVE IMPORT COMPLETED");
+    console.log("⏰ End Time:", new Date().toISOString());
+    console.log("📊 Final Results Summary:");
+    console.log("  👥 Managers:", results.managers.imported, "imported,", results.managers.errors.length, "errors");
+    console.log("  🏢 Accounts:", results.accounts.imported, "imported,", results.accounts.errors.length, "errors");
+    console.log("  👨‍💼 Sellers:", results.sellers.imported, "imported,", results.sellers.errors.length, "errors");
+    console.log("  🔗 Relationships:", results.relationships.imported, "imported,", results.relationships.errors.length, "errors");
+    console.log("  👥 Manager Teams:", results.managerTeams.imported, "imported,", results.managerTeams.errors.length, "errors");
+    
+    const totalImported = Object.values(results).reduce((sum: number, result: any) => sum + result.imported, 0);
+    const totalErrors = Object.values(results).reduce((sum: number, result: any) => sum + result.errors.length, 0);
+    
+    console.log("📈 TOTAL:", totalImported, "records imported,", totalErrors, "errors");
+    
+    if (totalErrors > 0) {
+      console.log("⚠️ Errors encountered:");
+      Object.entries(results).forEach(([key, result]: [string, any]) => {
+        if (result.errors.length > 0) {
+          console.log(`  ${key}:`, result.errors);
+        }
+      });
     }
     
     return results;
     
   } catch (error) {
-    console.error("Comprehensive import failed:", error);
+    console.error("💥 COMPREHENSIVE IMPORT FAILED:", error);
+    console.error("⏰ Failure Time:", new Date().toISOString());
     throw error;
   }
 }

@@ -1,21 +1,28 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-export function middleware(request: NextRequest) {
-  // Handle auth redirects and protected routes
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   
   // Skip middleware for static files and API routes
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
-    pathname.includes('.')
+    pathname.includes('.') ||
+    pathname.startsWith('/favicon')
   ) {
     return NextResponse.next()
   }
 
-  // For now, let the client-side auth handle redirects
-  // This can be enhanced later with server-side auth checks
+  // Simple route-based redirects without Supabase authentication
+  // This avoids Edge Runtime issues with Supabase
+  
+  // Define public routes that don't require authentication
+  const publicRoutes = ['/auth']
+  const isPublicRoute = publicRoutes.some(route => pathname.startsWith(route))
+  
+  // For now, allow all routes to pass through
+  // Authentication will be handled by the AuthContext in the app
   return NextResponse.next()
 }
 

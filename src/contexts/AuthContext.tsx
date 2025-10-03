@@ -17,7 +17,6 @@ interface AuthContextType {
   session: Session | null;
   profile: Profile | null;
   loading: boolean;
-  signUp: (email: string, password: string, name: string, role: "MASTER" | "MANAGER") => Promise<{ error: any }>;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
 }
@@ -32,70 +31,89 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
+    let mounted = true;
+
     // Set up auth state listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (!mounted) return;
+        
         setSession(session);
         setUser(session?.user ?? null);
         
         if (session?.user) {
           // Fetch profile after auth state changes
-          setTimeout(async () => {
-            const { data: profileData } = await supabase
+          try {
+            const { data: profileData, error } = await supabase
               .from("profiles")
               .select("*")
               .eq("id", session.user.id)
               .maybeSingle();
             
-            setProfile(profileData);
-          }, 0);
+            if (error) {
+              console.error('Error fetching profile:', error);
+            } else {
+              setProfile(profileData);
+            }
+          } catch (error) {
+            console.error('Error fetching profile:', error);
+          }
         } else {
           setProfile(null);
         }
+        
+        setLoading(false);
       }
     );
 
     // Check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        setTimeout(async () => {
-          const { data: profileData } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("id", session.user.id)
-            .maybeSingle();
-          
-          setProfile(profileData);
+    const initializeAuth = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('Error getting session:', error);
           setLoading(false);
-        }, 0);
-      } else {
+          return;
+        }
+        
+        if (!mounted) return;
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          try {
+            const { data: profileData, error: profileError } = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("id", session.user.id)
+              .maybeSingle();
+            
+            if (profileError) {
+              console.error('Error fetching profile:', profileError);
+            } else {
+              setProfile(profileData);
+            }
+          } catch (error) {
+            console.error('Error fetching profile:', error);
+          }
+        }
+        
+        setLoading(false);
+      } catch (error) {
+        console.error('Error initializing auth:', error);
         setLoading(false);
       }
-    });
+    };
 
-    return () => subscription.unsubscribe();
+    initializeAuth();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
-
-  const signUp = async (email: string, password: string, name: string, role: "MASTER" | "MANAGER") => {
-    const redirectUrl = `${window.location.origin}/`;
-    
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectUrl,
-        data: {
-          name,
-          role,
-        },
-      },
-    });
-    
-    return { error };
-  };
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({
@@ -116,7 +134,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, loading, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, profile, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

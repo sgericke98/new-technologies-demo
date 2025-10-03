@@ -16,7 +16,7 @@ export function AppHeader() {
   const { profile, signOut } = useAuth();
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-gradient-header shadow-md">
+    <header className="sticky top-0 z-50 w-full border-b bg-gradient-header shadow-md overflow-visible">
       <div className="container flex h-16 items-center justify-between px-4">
         <Link href="/dashboard" className="flex items-center space-x-2">
           <Building2 className="h-6 w-6 text-primary-foreground" />
@@ -31,13 +31,6 @@ export function AppHeader() {
               Dashboard
             </Button>
           </Link>
-          {profile?.role === "MASTER" && (
-            <Link href="/requests">
-              <Button variant="ghost" className="text-primary-foreground hover:bg-white/20">
-                Requests
-              </Button>
-            </Link>
-          )}
           {profile?.role === "MASTER" && (
             <Link href="/admin/settings">
               <Button variant="ghost" className="text-primary-foreground hover:bg-white/20">
@@ -54,7 +47,7 @@ export function AppHeader() {
                 <span>{profile?.name}</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="end" className="w-56 z-50" sideOffset={5}>
               <DropdownMenuLabel>
                 <div className="flex flex-col space-y-1">
                   <p className="text-sm font-medium">{profile?.name}</p>

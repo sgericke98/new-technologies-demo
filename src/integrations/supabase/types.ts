@@ -52,6 +52,7 @@ export type Database = {
       accounts: {
         Row: {
           city: string | null
+          country: string | null
           created_at: string
           current_division: Database["public"]["Enums"]["division_type"]
           id: string
@@ -61,9 +62,12 @@ export type Database = {
           name: string
           size: Database["public"]["Enums"]["size_type"]
           state: string | null
+          tier: string | null
+          type: string | null
         }
         Insert: {
           city?: string | null
+          country?: string | null
           created_at?: string
           current_division: Database["public"]["Enums"]["division_type"]
           id?: string
@@ -73,9 +77,12 @@ export type Database = {
           name: string
           size: Database["public"]["Enums"]["size_type"]
           state?: string | null
+          tier?: string | null
+          type?: string | null
         }
         Update: {
           city?: string | null
+          country?: string | null
           created_at?: string
           current_division?: Database["public"]["Enums"]["division_type"]
           id?: string
@@ -85,6 +92,8 @@ export type Database = {
           name?: string
           size?: Database["public"]["Enums"]["size_type"]
           state?: string | null
+          tier?: string | null
+          type?: string | null
         }
         Relationships: []
       }
@@ -163,30 +172,18 @@ export type Database = {
           account_id: string
           created_at: string | null
           id: string
-          pct_esg: number | null
-          pct_gdt: number | null
-          pct_gvc: number | null
-          pct_msg_us: number | null
           seller_id: string
         }
         Insert: {
           account_id: string
           created_at?: string | null
           id?: string
-          pct_esg?: number | null
-          pct_gdt?: number | null
-          pct_gvc?: number | null
-          pct_msg_us?: number | null
           seller_id: string
         }
         Update: {
           account_id?: string
           created_at?: string | null
           id?: string
-          pct_esg?: number | null
-          pct_gdt?: number | null
-          pct_gvc?: number | null
-          pct_msg_us?: number | null
           seller_id?: string
         }
         Relationships: [
@@ -234,11 +231,6 @@ export type Database = {
         Row: {
           account_id: string
           id: string
-          last_actor_user_id: string | null
-          pct_esg: number | null
-          pct_gdt: number | null
-          pct_gvc: number | null
-          pct_msg_us: number | null
           seller_id: string
           status: Database["public"]["Enums"]["relationship_status"]
           updated_at: string
@@ -246,11 +238,6 @@ export type Database = {
         Insert: {
           account_id: string
           id?: string
-          last_actor_user_id?: string | null
-          pct_esg?: number | null
-          pct_gdt?: number | null
-          pct_gvc?: number | null
-          pct_msg_us?: number | null
           seller_id: string
           status?: Database["public"]["Enums"]["relationship_status"]
           updated_at?: string
@@ -258,11 +245,6 @@ export type Database = {
         Update: {
           account_id?: string
           id?: string
-          last_actor_user_id?: string | null
-          pct_esg?: number | null
-          pct_gdt?: number | null
-          pct_gvc?: number | null
-          pct_msg_us?: number | null
           seller_id?: string
           status?: Database["public"]["Enums"]["relationship_status"]
           updated_at?: string
@@ -276,13 +258,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "relationship_maps_last_actor_user_id_fkey"
-            columns: ["last_actor_user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "relationship_maps_seller_id_fkey"
             columns: ["seller_id"]
             isOneToOne: false
@@ -291,81 +266,35 @@ export type Database = {
           },
         ]
       }
-      requests: {
+      relationship_maps_backup: {
         Row: {
-          account_id: string
-          created_at: string
-          decided_at: string | null
-          decided_by_user_id: string | null
-          id: string
-          payload: Json | null
-          reason: string | null
-          requester_user_id: string
-          status: Database["public"]["Enums"]["request_status"]
-          target_seller_id: string | null
-          type: Database["public"]["Enums"]["request_type"]
+          account_id: string | null
+          id: string | null
+          seller_id: string | null
+          status: Database["public"]["Enums"]["relationship_status"] | null
+          updated_at: string | null
         }
         Insert: {
-          account_id: string
-          created_at?: string
-          decided_at?: string | null
-          decided_by_user_id?: string | null
-          id?: string
-          payload?: Json | null
-          reason?: string | null
-          requester_user_id: string
-          status?: Database["public"]["Enums"]["request_status"]
-          target_seller_id?: string | null
-          type: Database["public"]["Enums"]["request_type"]
+          account_id?: string | null
+          id?: string | null
+          seller_id?: string | null
+          status?: Database["public"]["Enums"]["relationship_status"] | null
+          updated_at?: string | null
         }
         Update: {
-          account_id?: string
-          created_at?: string
-          decided_at?: string | null
-          decided_by_user_id?: string | null
-          id?: string
-          payload?: Json | null
-          reason?: string | null
-          requester_user_id?: string
-          status?: Database["public"]["Enums"]["request_status"]
-          target_seller_id?: string | null
-          type?: Database["public"]["Enums"]["request_type"]
+          account_id?: string | null
+          id?: string | null
+          seller_id?: string | null
+          status?: Database["public"]["Enums"]["relationship_status"] | null
+          updated_at?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "requests_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "requests_decided_by_user_id_fkey"
-            columns: ["decided_by_user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "requests_requester_user_id_fkey"
-            columns: ["requester_user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "requests_target_seller_id_fkey"
-            columns: ["target_seller_id"]
-            isOneToOne: false
-            referencedRelation: "sellers"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       sellers: {
         Row: {
           book_finalized: boolean | null
           city: string | null
+          country: string | null
           created_at: string
           division: Database["public"]["Enums"]["division_type"]
           id: string
@@ -381,6 +310,7 @@ export type Database = {
         Insert: {
           book_finalized?: boolean | null
           city?: string | null
+          country?: string | null
           created_at?: string
           division: Database["public"]["Enums"]["division_type"]
           id?: string
@@ -396,6 +326,7 @@ export type Database = {
         Update: {
           book_finalized?: boolean | null
           city?: string | null
+          country?: string | null
           created_at?: string
           division?: Database["public"]["Enums"]["division_type"]
           id?: string
@@ -425,11 +356,70 @@ export type Database = {
           },
         ]
       }
+      account_number_settings: {
+        Row: {
+          created_at: string | null
+          id: string
+          max_accounts: number
+          seniority_type: string
+          size_type: Database["public"]["Enums"]["size_type"]
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          max_accounts?: number
+          seniority_type: string
+          size_type: Database["public"]["Enums"]["size_type"]
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          max_accounts?: number
+          seniority_type?: string
+          size_type?: Database["public"]["Enums"]["size_type"]
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      revenue_range_settings: {
+        Row: {
+          created_at: string | null
+          id: string
+          max_revenue: number
+          min_revenue: number
+          seniority_type: string
+          size_type: Database["public"]["Enums"]["size_type"]
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          max_revenue: number
+          min_revenue: number
+          seniority_type: string
+          size_type: Database["public"]["Enums"]["size_type"]
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          max_revenue?: number
+          min_revenue?: number
+          seniority_type?: string
+          size_type?: Database["public"]["Enums"]["size_type"]
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       threshold_settings: {
         Row: {
           account_threshold: number
           created_at: string | null
           id: string
+          revenue_max_threshold: number | null
+          revenue_min_threshold: number | null
           revenue_threshold: number
           updated_at: string | null
         }
@@ -437,6 +427,8 @@ export type Database = {
           account_threshold?: number
           created_at?: string | null
           id?: string
+          revenue_max_threshold?: number | null
+          revenue_min_threshold?: number | null
           revenue_threshold?: number
           updated_at?: string | null
         }
@@ -444,6 +436,8 @@ export type Database = {
           account_threshold?: number
           created_at?: string | null
           id?: string
+          revenue_max_threshold?: number | null
+          revenue_min_threshold?: number | null
           revenue_threshold?: number
           updated_at?: string | null
         }
@@ -493,7 +487,7 @@ export type Database = {
     }
     Enums: {
       app_role: "MASTER" | "MANAGER"
-      division_type: "ESG" | "GDT" | "GVC" | "MSG_US"
+      division_type: "ESG" | "GDT" | "GVC" | "MSG_US" | "MIXED"
       relationship_status:
         | "approval_for_pinning"
         | "pinned"
@@ -507,7 +501,7 @@ export type Database = {
         | "to_be_peeled"
       request_status: "pending" | "approved" | "rejected"
       request_type: "pin" | "assign" | "unassign"
-      size_type: "enterprise" | "midmarket"
+      size_type: "enterprise" | "midmarket" | "no_data"
     }
     CompositeTypes: {
       [_ in never]: never
