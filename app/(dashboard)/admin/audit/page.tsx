@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -38,11 +39,12 @@ interface AuditFilters {
 }
 
 export default function AuditPage() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const { toast } = useToast();
+  const router = useRouter();
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [stats, setStats] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
   const [filters, setFilters] = useState<AuditFilters>({});
   const [currentPage, setCurrentPage] = useState(1);
@@ -51,6 +53,13 @@ export default function AuditPage() {
 
   const isAdmin = user?.user_metadata?.role === 'MASTER' || user?.user_metadata?.role === 'MANAGER';
   const ITEMS_PER_PAGE = 20;
+
+  // Redirect if not authenticated
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/auth");
+    }
+  }, [user, loading, router]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -61,7 +70,7 @@ export default function AuditPage() {
 
   const fetchAuditData = async () => {
     try {
-      setLoading(true);
+      setDataLoading(true);
       const offset = (currentPage - 1) * ITEMS_PER_PAGE;
       
       const auditLogs = await getAuditLogs({
@@ -85,7 +94,7 @@ export default function AuditPage() {
         variant: 'destructive',
       });
     } finally {
-      setLoading(false);
+      setDataLoading(false);
     }
   };
 
@@ -146,6 +155,20 @@ export default function AuditPage() {
       });
     }
   };
+
+  // Show loading while checking authentication
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+        <PageLoader text="Authenticating..." />
+      </div>
+    );
+  }
+
+  // Don't render anything if not authenticated (will redirect)
+  if (!user) {
+    return null;
+  }
 
   if (!isAdmin) {
     return (
