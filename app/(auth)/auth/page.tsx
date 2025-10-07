@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useToast } from "@/hooks/use-toast";
 import { Building2 } from "lucide-react";
 import { useEffect } from "react";
+import Image from "next/image";
 
 export default function AuthPage() {
   const [isLoading, setIsLoading] = useState(false);
@@ -72,12 +73,18 @@ export default function AuthPage() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary/5 via-background to-accent/5 p-4">
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="space-y-1 text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-gradient-header">
-            <Building2 className="h-6 w-6 text-primary-foreground" />
+          <div className="mx-auto mb-6 flex items-center justify-center">
+            <Image
+              src="/logo-1.png"
+              alt="BAIN Logo"
+              width={150}
+              height={150}
+              className="object-contain"
+            />
           </div>
-          <CardTitle className="text-2xl font-bold">Account Reassignment</CardTitle>
+          <CardTitle className="text-2xl font-bold">Welcome to New Era Technologies</CardTitle>
           <CardDescription>
-            Sign in to manage seller assignments
+            Sign in to access your account assignment dashboard
           </CardDescription>
         </CardHeader>
         <CardContent>

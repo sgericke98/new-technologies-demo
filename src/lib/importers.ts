@@ -2,6 +2,238 @@ import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import { logAuditEvent, createAuditLogData, AUDIT_ACTIONS, AUDIT_ENTITIES } from "@/lib/audit";
 
+// ========== Progress Callback Interface ==========
+export interface ImportProgressCallback {
+  (message: string): void;
+}
+
+// ========== Template Validation ==========
+export interface ValidationResult {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+// Validate individual sellers template
+export function validateSellersTemplate(wb: XLSX.WorkBook): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  
+  if (!wb.SheetNames.includes("Sellers")) {
+    errors.push("Missing 'Sellers' sheet");
+    return { isValid: false, errors, warnings };
+  }
+  
+  const ws = wb.Sheets["Sellers"];
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+  
+  if (data.length < 2) {
+    errors.push("Sellers sheet must have at least a header row and one data row");
+    return { isValid: false, errors, warnings };
+  }
+  
+  const headers = data[0] as string[];
+  const requiredColumns = ["seller_name", "division", "size"];
+  const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+  
+  if (missingColumns.length > 0) {
+    errors.push(`Missing required columns: ${missingColumns.join(", ")}`);
+  }
+  
+  // Check for unexpected columns
+  const expectedColumns = ["seller_name", "division", "size", "industry_specialty", "state", "city", "country", "hire_date", "seniority_type"];
+  const unexpectedColumns = headers.filter(h => !expectedColumns.includes(h));
+  
+  if (unexpectedColumns.length > 0) {
+    warnings.push(`Unexpected columns found: ${unexpectedColumns.join(", ")}`);
+  }
+  
+  // Validate country and state codes and check for discrepancies
+  const availableCountryCodes = getAvailableCountryCodes();
+  const availableStateCodes = getAvailableStateCodes();
+  const locationDiscrepancies: string[] = [];
+  
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i] as any[];
+    const rowNum = i + 1;
+    
+    if (row[headers.indexOf("country")]) {
+      const country = row[headers.indexOf("country")].toString().trim();
+      if (country && country !== "N/A" && country !== "No data" && !availableCountryCodes.includes(country)) {
+        locationDiscrepancies.push(`Row ${rowNum}: Country '${country}' not found in mapping`);
+      }
+    }
+    
+    if (row[headers.indexOf("state")]) {
+      const state = row[headers.indexOf("state")].toString().trim();
+      const stateUpper = state.toUpperCase();
+      if (state && state !== "N/A" && state !== "No data" && stateUpper !== "WI" && state !== "Distributed" && !availableStateCodes.includes(stateUpper)) {
+        locationDiscrepancies.push(`Row ${rowNum}: State '${state}' not found in mapping`);
+      }
+    }
+  }
+  
+  if (locationDiscrepancies.length > 0) {
+    warnings.push(...locationDiscrepancies);
+  }
+  
+  return { isValid: errors.length === 0, errors, warnings };
+}
+
+// Validate individual accounts template
+export function validateAccountsTemplate(wb: XLSX.WorkBook): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  
+  if (!wb.SheetNames.includes("Accounts")) {
+    errors.push("Missing 'Accounts' sheet");
+    return { isValid: false, errors, warnings };
+  }
+  
+  const ws = wb.Sheets["Accounts"];
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+  
+  if (data.length < 2) {
+    errors.push("Accounts sheet must have at least a header row and one data row");
+    return { isValid: false, errors, warnings };
+  }
+  
+  const headers = data[0] as string[];
+  const requiredColumns = ["account_name", "size", "current_division"];
+  const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+  
+  if (missingColumns.length > 0) {
+    errors.push(`Missing required columns: ${missingColumns.join(", ")}`);
+  }
+  
+  // Check for unexpected columns
+  const expectedColumns = ["account_name", "industry", "size", "tier", "type", "state", "city", "country", "current_division", "revenue_ESG", "revenue_GDT", "revenue_GVC", "revenue_MSG_US"];
+  const unexpectedColumns = headers.filter(h => !expectedColumns.includes(h));
+  
+  if (unexpectedColumns.length > 0) {
+    warnings.push(`Unexpected columns found: ${unexpectedColumns.join(", ")}`);
+  }
+  
+  // Validate country and state codes and check for discrepancies
+  const availableCountryCodes = getAvailableCountryCodes();
+  const availableStateCodes = getAvailableStateCodes();
+  const locationDiscrepancies: string[] = [];
+  
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i] as any[];
+    const rowNum = i + 1;
+    
+    if (row[headers.indexOf("country")]) {
+      const country = row[headers.indexOf("country")].toString().trim();
+      if (country && country !== "N/A" && country !== "No data" && !availableCountryCodes.includes(country)) {
+        locationDiscrepancies.push(`Row ${rowNum}: Country '${country}' not found in mapping`);
+      }
+    }
+    
+    if (row[headers.indexOf("state")]) {
+      const state = row[headers.indexOf("state")].toString().trim();
+      const stateUpper = state.toUpperCase();
+      if (state && state !== "N/A" && state !== "No data" && stateUpper !== "WI" && state !== "Distributed" && !availableStateCodes.includes(stateUpper)) {
+        locationDiscrepancies.push(`Row ${rowNum}: State '${state}' not found in mapping`);
+      }
+    }
+  }
+  
+  if (locationDiscrepancies.length > 0) {
+    warnings.push(...locationDiscrepancies);
+  }
+  
+  return { isValid: errors.length === 0, errors, warnings };
+}
+
+// Validate comprehensive template
+export function validateComprehensiveTemplate(wb: XLSX.WorkBook): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  
+  const requiredSheets = ["Accounts", "Sellers", "Managers", "Relationship_Map", "Manager_Team"];
+  const missingSheets = requiredSheets.filter(sheet => !wb.SheetNames.includes(sheet));
+  
+  if (missingSheets.length > 0) {
+    errors.push(`Missing required sheets: ${missingSheets.join(", ")}`);
+  }
+  
+  // Get available country codes for validation
+  const availableCountryCodes = getAvailableCountryCodes();
+  
+  // Validate each sheet if it exists
+  for (const sheetName of requiredSheets) {
+    if (wb.SheetNames.includes(sheetName)) {
+      const ws = wb.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      
+      if (data.length < 2) {
+        errors.push(`${sheetName} sheet must have at least a header row and one data row`);
+        continue;
+      }
+      
+      const headers = data[0] as string[];
+      
+      // Define required columns for each sheet
+      let requiredColumns: string[] = [];
+      switch (sheetName) {
+        case "Accounts":
+          requiredColumns = ["account_name", "size", "current_division"];
+          break;
+        case "Sellers":
+          requiredColumns = ["seller_name", "division", "size"];
+          break;
+        case "Managers":
+          requiredColumns = ["manager_name", "manager_email"];
+          break;
+        case "Relationship_Map":
+          requiredColumns = ["account_name", "seller_name"];
+          break;
+        case "Manager_Team":
+          requiredColumns = ["manager_name", "seller_name"];
+          break;
+      }
+      
+      const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+      if (missingColumns.length > 0) {
+        errors.push(`${sheetName} sheet missing required columns: ${missingColumns.join(", ")}`);
+      }
+      
+      // Check for country and state discrepancies in Accounts and Sellers sheets
+      if ((sheetName === "Accounts" || sheetName === "Sellers") && (headers.includes("country") || headers.includes("state"))) {
+        const availableStateCodes = getAvailableStateCodes();
+        const locationDiscrepancies: string[] = [];
+        
+        for (let i = 1; i < data.length; i++) {
+          const row = data[i] as any[];
+          const rowNum = i + 1;
+          
+          if (row[headers.indexOf("country")]) {
+            const country = row[headers.indexOf("country")].toString().trim();
+            if (country && country !== "N/A" && country !== "No data" && !availableCountryCodes.includes(country)) {
+              locationDiscrepancies.push(`${sheetName} Row ${rowNum}: Country '${country}' not found in mapping`);
+            }
+          }
+          
+          if (row[headers.indexOf("state")]) {
+            const state = row[headers.indexOf("state")].toString().trim();
+            const stateUpper = state.toUpperCase();
+            if (state && state !== "N/A" && state !== "No data" && stateUpper !== "WI" && state !== "Distributed" && !availableStateCodes.includes(stateUpper)) {
+              locationDiscrepancies.push(`${sheetName} Row ${rowNum}: State '${state}' not found in mapping`);
+            }
+          }
+        }
+        
+        if (locationDiscrepancies.length > 0) {
+          warnings.push(...locationDiscrepancies);
+        }
+      }
+    }
+  }
+  
+  return { isValid: errors.length === 0, errors, warnings };
+}
+
 // Helpers
 export function readSheet(file: File) {
   return new Promise<XLSX.WorkBook>((resolve, reject) => {
@@ -108,6 +340,30 @@ export async function importAccounts(file: File, userId?: string) {
         throw new Error(`Invalid size: ${r.size}. Must be 'enterprise' or 'midmarket'`);
       }
       
+      // Get lat/lng from country or state mapping if not provided
+      let lat = r.latitude;
+      let lng = r.longitude;
+      
+      if (!lat || !lng) {
+        // Try state mapping first (more specific) - skip if "N/A", "No data", "Wi"/"WI", or "Distributed"
+        if (r.state && r.state !== "N/A" && r.state !== "No data" && r.state.toUpperCase() !== "WI" && r.state !== "Distributed") {
+          const stateCoords = getStateCoordinates(r.state.toUpperCase());
+          if (stateCoords) {
+            lat = lat || stateCoords.latitude;
+            lng = lng || stateCoords.longitude;
+          }
+        }
+        
+        // Fall back to country mapping if state not found - skip if "N/A" or "No data"
+        if (r.country && r.country !== "N/A" && r.country !== "No data" && (!lat || !lng)) {
+          const countryCoords = getCountryCoordinates(r.country);
+          if (countryCoords) {
+            lat = lat || countryCoords.latitude;
+            lng = lng || countryCoords.longitude;
+          }
+        }
+      }
+      
       return {
         name: r.account_name,
         industry: r.industry,
@@ -117,8 +373,8 @@ export async function importAccounts(file: File, userId?: string) {
         state: r.state,
         city: r.city,
         country: r.country,
-        lat: r.latitude,
-        lng: r.longitude,
+        lat: lat,
+        lng: lng,
         current_division: normalizedDivision as any,
       };
     });
@@ -194,6 +450,16 @@ export async function importAccounts(file: File, userId?: string) {
 
   console.log(`✓ Successfully imported ${uniqueAccounts.length} accounts with ${uniqueRevenues.length} revenue records`);
 
+  // Refresh materialized views to update dashboard data
+  try {
+    console.log('🔄 Refreshing materialized views...');
+    await supabase.rpc('refresh_performance_views');
+    console.log('✅ Materialized views refreshed successfully');
+  } catch (refreshError) {
+    console.error('❌ Error refreshing materialized views:', refreshError);
+    // Don't fail the import if refresh fails
+  }
+
   // Log audit event
   if (userId) {
     const auditData = createAuditLogData(
@@ -212,6 +478,16 @@ export async function importAccounts(file: File, userId?: string) {
     );
     
     await logAuditEvent(auditData);
+    
+    // Refresh materialized views to update dashboard data
+    try {
+      console.log('🔄 Refreshing materialized views...');
+      await supabase.rpc('refresh_performance_views');
+      console.log('✅ Materialized views refreshed successfully');
+    } catch (refreshError) {
+      console.error('❌ Error refreshing materialized views:', refreshError);
+      // Don't fail the import if refresh fails
+    }
   }
 }
 
@@ -226,7 +502,8 @@ type SellerRow = {
   country: string | null;
   latitude: number | null;
   longitude: number | null;
-  tenure_months?: number | null;
+  hire_date?: string | null;
+  seniority_type?: "junior" | "senior" | null;
 };
 
 export async function importSellers(file: File, userId?: string) {
@@ -284,6 +561,30 @@ export async function importSellers(file: File, userId?: string) {
         throw new Error(`Invalid size: ${r.size}. Must be 'enterprise' or 'midmarket'`);
       }
 
+      // Get lat/lng from country or state mapping if not provided
+      let lat = r.latitude;
+      let lng = r.longitude;
+      
+      if (!lat || !lng) {
+        // Try state mapping first (more specific) - skip if "N/A", "No data", "Wi"/"WI", or "Distributed"
+        if (r.state && r.state !== "N/A" && r.state !== "No data" && r.state.toUpperCase() !== "WI" && r.state !== "Distributed") {
+          const stateCoords = getStateCoordinates(r.state.toUpperCase());
+          if (stateCoords) {
+            lat = lat || stateCoords.latitude;
+            lng = lng || stateCoords.longitude;
+          }
+        }
+        
+        // Fall back to country mapping if state not found - skip if "N/A" or "No data"
+        if (r.country && r.country !== "N/A" && r.country !== "No data" && (!lat || !lng)) {
+          const countryCoords = getCountryCoordinates(r.country);
+          if (countryCoords) {
+            lat = lat || countryCoords.latitude;
+            lng = lng || countryCoords.longitude;
+          }
+        }
+      }
+
       return {
         name: r.seller_name,
         division: normalizedDivision as any,
@@ -292,9 +593,10 @@ export async function importSellers(file: File, userId?: string) {
         state: r.state,
         city: r.city,
         country: r.country,
-        lat: r.latitude,
-        lng: r.longitude,
-        tenure_months: r.tenure_months ?? null,
+        lat: lat,
+        lng: lng,
+        tenure_months: r.hire_date ? calculateTenureMonths(r.hire_date) : null,
+        seniority_type: r.seniority_type || null,
         manager_id: null, // Will be assigned via Manager_Team tab
       };
     });
@@ -315,6 +617,16 @@ export async function importSellers(file: File, userId?: string) {
 
   console.log(`✓ Successfully imported ${sellersToUpsert.length} sellers`);
 
+  // Refresh materialized views to update dashboard data
+  try {
+    console.log('🔄 Refreshing materialized views...');
+    await supabase.rpc('refresh_performance_views');
+    console.log('✅ Materialized views refreshed successfully');
+  } catch (refreshError) {
+    console.error('❌ Error refreshing materialized views:', refreshError);
+    // Don't fail the import if refresh fails
+  }
+
   // Log audit event
   if (userId) {
     const auditData = createAuditLogData(
@@ -332,6 +644,16 @@ export async function importSellers(file: File, userId?: string) {
     );
     
     await logAuditEvent(auditData);
+    
+    // Refresh materialized views to update dashboard data
+    try {
+      console.log('🔄 Refreshing materialized views...');
+      await supabase.rpc('refresh_performance_views');
+      console.log('✅ Materialized views refreshed successfully');
+    } catch (refreshError) {
+      console.error('❌ Error refreshing materialized views:', refreshError);
+      // Don't fail the import if refresh fails
+    }
   }
 }
 
@@ -562,6 +884,16 @@ export async function importRelationshipMap(file: File, userId?: string) {
 
   console.log(`✓ Successfully imported ${relationshipsToUpsert.length} relationships`);
 
+  // Refresh materialized views to update dashboard data
+  try {
+    console.log('🔄 Refreshing materialized views...');
+    await supabase.rpc('refresh_performance_views');
+    console.log('✅ Materialized views refreshed successfully');
+  } catch (refreshError) {
+    console.error('❌ Error refreshing materialized views:', refreshError);
+    // Don't fail the import if refresh fails
+  }
+
   // Create snapshot for original_relationships table
   console.log(`Creating snapshot of ${relationshipsToUpsert.length} original relationships...`);
   
@@ -614,6 +946,7 @@ export async function importRelationshipMap(file: File, userId?: string) {
 type ManagerRow = {
   manager_name: string;
   manager_email: string;
+  user_id?: string;
 };
 
 export async function importManagers(file: File, userId?: string) {
@@ -679,6 +1012,16 @@ export async function importManagers(file: File, userId?: string) {
 
   console.log(`✓ Successfully imported ${uniqueManagers.length} managers`);
 
+  // Refresh materialized views to update dashboard data
+  try {
+    console.log('🔄 Refreshing materialized views...');
+    await supabase.rpc('refresh_performance_views');
+    console.log('✅ Materialized views refreshed successfully');
+  } catch (refreshError) {
+    console.error('❌ Error refreshing materialized views:', refreshError);
+    // Don't fail the import if refresh fails
+  }
+
   // Log audit event
   if (userId) {
     const auditData = createAuditLogData(
@@ -696,6 +1039,16 @@ export async function importManagers(file: File, userId?: string) {
     );
     
     await logAuditEvent(auditData);
+    
+    // Refresh materialized views to update dashboard data
+    try {
+      console.log('🔄 Refreshing materialized views...');
+      await supabase.rpc('refresh_performance_views');
+      console.log('✅ Materialized views refreshed successfully');
+    } catch (refreshError) {
+      console.error('❌ Error refreshing materialized views:', refreshError);
+      // Don't fail the import if refresh fails
+    }
   }
 }
 
@@ -820,41 +1173,69 @@ export async function importManagerTeam(file: File, userId?: string) {
     console.warn(`💡 Please check your Excel file for data consistency`);
   }
 
-  console.log(`Assigning ${updates.length} sellers to managers in batches...`);
+  console.log(`Creating ${updates.length} seller-manager relationships in batches...`);
 
-  // Batch update sellers
+  // Batch create seller-manager relationships
   const updateChunks = chunk(updates, BATCH_SIZE);
+  let totalImported = 0;
 
   for (let i = 0; i < updateChunks.length; i++) {
-    console.log(`Processing assignments batch ${i + 1}/${updateChunks.length}...`);
+    console.log(`Processing relationships batch ${i + 1}/${updateChunks.length}...`);
 
     const chunk = updateChunks[i];
-    const sellerIds = chunk.map(u => u.sellerId);
+    
+    // Check for existing relationships first
+    const existingRelationships = await supabase
+      .from("seller_managers")
+      .select("seller_id, manager_id")
+      .in("seller_id", chunk.map(u => u.sellerId))
+      .in("manager_id", chunk.map(u => u.managerId));
 
-    // Group by manager_id for efficient updates
-    const byManager = new Map<string, string[]>();
-    for (const u of chunk) {
-      if (!byManager.has(u.managerId)) byManager.set(u.managerId, []);
-      byManager.get(u.managerId)!.push(u.sellerId);
-    }
-
-    // Update in parallel for each manager
-    const promises = Array.from(byManager.entries()).map(([managerId, sellerIds]) =>
-      supabase
-        .from("sellers")
-        .update({ manager_id: managerId })
-        .in("id", sellerIds)
+    const existingSet = new Set(
+      existingRelationships.data?.map(r => `${r.seller_id}-${r.manager_id}`) || []
     );
 
-    const results = await Promise.all(promises);
-    const errors = results.filter(r => r.error);
+    // Filter out existing relationships
+    const newRelationships = chunk.filter(u => 
+      !existingSet.has(`${u.sellerId}-${u.managerId}`)
+    );
 
-    if (errors.length > 0) {
-      throw new Error(`Failed to update sellers: ${errors.map(e => e.error?.message).join(", ")}`);
+    if (newRelationships.length === 0) {
+      console.log(`✓ All relationships in batch ${i + 1} already exist`);
+      totalImported += chunk.length;
+      continue;
     }
+
+    // Insert new relationships
+    const relationshipsToInsert = newRelationships.map(u => ({
+      seller_id: u.sellerId,
+      manager_id: u.managerId,
+      is_primary: true // First manager is primary
+    }));
+
+    const { error } = await supabase
+      .from("seller_managers")
+      .insert(relationshipsToInsert);
+
+    if (error) {
+      throw new Error(`Failed to create seller-manager relationships: ${error.message}`);
+    }
+
+    totalImported += newRelationships.length;
+    console.log(`✓ Created ${newRelationships.length} new relationships in batch ${i + 1}`);
   }
 
-  console.log(`✓ Successfully assigned ${updates.length} sellers to managers`);
+  console.log(`✓ Successfully created ${totalImported} seller-manager relationships`);
+
+  // Refresh materialized views to update dashboard data
+  try {
+    console.log('🔄 Refreshing materialized views...');
+    await supabase.rpc('refresh_performance_views');
+    console.log('✅ Materialized views refreshed successfully');
+  } catch (refreshError) {
+    console.error('❌ Error refreshing materialized views:', refreshError);
+    // Don't fail the import if refresh fails
+  }
 
   // Log audit event
   if (userId) {
@@ -866,7 +1247,7 @@ export async function importManagerTeam(file: File, userId?: string) {
       null,
       {
         import_type: 'manager_team',
-        records_count: updates.length,
+        records_count: totalImported,
         file_name: file.name,
         file_size: file.size,
         assignments_count: updates.length,
@@ -874,6 +1255,1089 @@ export async function importManagerTeam(file: File, userId?: string) {
     );
     
     await logAuditEvent(auditData);
+  }
+}
+
+// ========== ADD Mode Import Functions (Insert New Records, Keep Existing) ==========
+
+// ADD Mode: Import new data without deleting existing records
+export async function importComprehensiveDataAdd(file: File, userId?: string, onProgress?: ImportProgressCallback) {
+  onProgress?.("🚀 Starting ADD MODE comprehensive import...");
+  onProgress?.(`⏰ Start Time: ${new Date().toISOString()}`);
+  
+  const wb = await readSheet(file);
+  const results: any = {};
+
+  try {
+    // 1. Import Managers (ADD mode - no deletion)
+    onProgress?.("📋 Processing Managers sheet...");
+    if (wb.SheetNames.includes("Managers")) {
+      const managerRows = sheetToJson<ManagerRow>(wb, "Managers");
+      if (managerRows.length > 0) {
+        const { imported, errors } = await importManagersAdd(managerRows, userId);
+        results.managers = { imported, errors };
+        onProgress?.(`✅ Managers: ${imported} imported, ${errors.length} errors`);
+      }
+    } else {
+      onProgress?.("⚠️ No Managers sheet found in Excel file");
+    }
+
+    // 2. Import Accounts (ADD mode - no deletion)
+    console.log("📋 Processing Accounts sheet...");
+    if (wb.SheetNames.includes("Accounts")) {
+      const accountRows = sheetToJson<AccountRow>(wb, "Accounts");
+      if (accountRows.length > 0) {
+        const { imported, errors } = await importAccountsAdd(accountRows, userId);
+        results.accounts = { imported, errors };
+        console.log(`✅ Accounts: ${imported} imported, ${errors.length} errors`);
+      }
+    } else {
+      console.log("⚠️ No Accounts sheet found in Excel file");
+    }
+
+    // 3. Import Sellers (ADD mode - no deletion)
+    console.log("📋 Processing Sellers sheet...");
+    if (wb.SheetNames.includes("Sellers")) {
+      const sellerRows = sheetToJson<SellerRow>(wb, "Sellers");
+      if (sellerRows.length > 0) {
+        const { imported, errors } = await importSellersAdd(sellerRows, userId);
+        results.sellers = { imported, errors };
+        console.log(`✅ Sellers: ${imported} imported, ${errors.length} errors`);
+      }
+    } else {
+      console.log("⚠️ No Sellers sheet found in Excel file");
+    }
+
+    // 4. Import Relationship Maps (ADD mode - no deletion)
+    console.log("📋 Processing Relationship_Map sheet...");
+    if (wb.SheetNames.includes("Relationship_Map")) {
+      const relRows = sheetToJson<RelRow>(wb, "Relationship_Map");
+      if (relRows.length > 0) {
+        const { imported, errors } = await importRelationshipMapAdd(relRows, userId);
+        results.relationships = { imported, errors };
+        console.log(`✅ Relationships: ${imported} imported, ${errors.length} errors`);
+      }
+    } else {
+      console.log("⚠️ No Relationship_Map sheet found in Excel file");
+    }
+
+    // 5. Import Manager Team assignments (ADD mode - no deletion)
+    console.log("📋 Processing Manager_Team sheet...");
+    if (wb.SheetNames.includes("Manager_Team")) {
+      const mgrTeamRows = sheetToJson<ManagerTeamRow>(wb, "Manager_Team");
+      if (mgrTeamRows.length > 0) {
+        const { imported, errors } = await importManagerTeamAdd(mgrTeamRows, userId);
+        results.manager_assignments = { imported, errors };
+        console.log(`✅ Manager Assignments: ${imported} imported, ${errors.length} errors`);
+      }
+    } else {
+      console.log("⚠️ No Manager_Team sheet found in Excel file");
+    }
+    
+    // Refresh materialized views to update dashboard data
+    onProgress?.("🔄 Refreshing materialized views after ADD import...");
+    try {
+      await supabase.rpc('refresh_performance_views');
+      onProgress?.("✅ Materialized views refreshed successfully");
+    } catch (refreshError) {
+      onProgress?.(`❌ Error refreshing materialized views: ${refreshError}`);
+      // Don't fail the import if refresh fails
+    }
+
+    // Log comprehensive audit event
+    console.log("📝 Logging comprehensive ADD audit event...");
+    if (userId) {
+      const auditData = createAuditLogData(
+        userId,
+        'data_import',
+        'COMPREHENSIVE_ADD',
+        undefined,
+        null,
+        {
+          import_type: 'comprehensive_add',
+          file_name: file.name,
+          file_size: file.size,
+          results: results
+        }
+      );
+      
+      await logAuditEvent(auditData);
+      console.log("✅ Audit event logged successfully");
+    }
+    
+    // Final summary
+    console.log("🎉 COMPREHENSIVE ADD IMPORT COMPLETED");
+    console.log("⏰ End Time:", new Date().toISOString());
+    console.log("📊 Final Results Summary:");
+    Object.entries(results).forEach(([key, result]: [string, any]) => {
+      console.log(`  ${key}: ${result.imported} imported, ${result.errors.length} errors`);
+    });
+
+    return results;
+  } catch (error) {
+    console.error("❌ ADD import failed:", error);
+    throw error;
+  }
+}
+
+// ADD Mode: Import managers without deleting existing ones
+async function importManagersAdd(rows: ManagerRow[], userId?: string) {
+  const required = ["manager_name", "user_id"];
+  for (const r of required) {
+    if (!(rows[0] as any)?.[r]) {
+      throw new Error(`Managers file missing required column: ${r}`);
+    }
+  }
+
+  const managersToInsert = rows
+    .filter(r => r.manager_name && r.user_id)
+    .map(r => ({
+      name: r.manager_name,
+      user_id: r.user_id!,
+    }));
+
+  // Remove duplicates based on user_id (keep first occurrence)
+  const uniqueManagers = managersToInsert.filter((manager, index, self) => 
+    index === self.findIndex(m => m.user_id === manager.user_id)
+  );
+
+  console.log(`Inserting ${uniqueManagers.length} new managers (keeping existing)...`);
+
+  const managerChunks = chunk(uniqueManagers, BATCH_SIZE);
+  let imported = 0;
+  const errors: any[] = [];
+
+  for (let i = 0; i < managerChunks.length; i++) {
+    console.log(`Processing managers batch ${i + 1}/${managerChunks.length}...`);
+    const { error } = await supabase
+      .from("managers")
+      .insert(managerChunks[i]);
+
+    if (error) {
+      console.error(`Failed to insert managers batch ${i + 1}:`, error);
+      errors.push({ batch: i + 1, error });
+    } else {
+      imported += managerChunks[i].length;
+    }
+  }
+
+  console.log(`✓ Successfully inserted ${imported} new managers (existing preserved)`);
+
+  // Log audit event
+  if (userId) {
+    const auditData = createAuditLogData(
+      userId,
+      'data_import',
+      AUDIT_ENTITIES.MANAGER,
+      undefined,
+      null,
+      {
+        import_type: 'managers_add',
+        records_count: imported,
+        operation: 'insert',
+      }
+    );
+    
+    await logAuditEvent(auditData);
+  }
+
+  return { imported, errors };
+}
+
+// ADD Mode: Import accounts without deleting existing ones
+async function importAccountsAdd(rows: AccountRow[], userId?: string) {
+  const required = ["account_name", "size", "current_division"];
+  for (const r of required) {
+    if (!(rows[0] as any)?.[r]) {
+      throw new Error(`Accounts file missing required column: ${r}`);
+    }
+  }
+
+  const divisionMap: Record<string, string> = {
+    "ESG": "ESG",
+    "GDT": "GDT", 
+    "GVC": "GVC",
+    "MSG US": "MSG_US",
+    "MSG_US": "MSG_US",
+    "Mixed": "MIXED",
+  };
+
+  const sizeMap: Record<string, string> = {
+    "enterprise": "enterprise",
+    "Enterprise": "enterprise",
+    "ENTERPRISE": "enterprise",
+    "midmarket": "midmarket", 
+    "Midmarket": "midmarket",
+    "MIDMARKET": "midmarket",
+    "no_data": "no_data",
+    "No data": "no_data",
+    "No Data": "no_data",
+    "NO_DATA": "no_data",
+    "-": "no_data",
+    "": "no_data",
+    "N/A": "no_data",
+    "Unknown": "no_data",
+  };
+
+  const accountsToInsert = rows
+    .filter(r => r.account_name)
+    .map(r => {
+      const normalizedDivision = divisionMap[r.current_division];
+      if (!normalizedDivision) {
+        throw new Error(`Invalid division: ${r.current_division}`);
+      }
+      
+      const normalizedSize = sizeMap[r.size];
+      if (!normalizedSize) {
+        throw new Error(`Invalid size: ${r.size}. Must be 'enterprise' or 'midmarket'`);
+      }
+      
+      // Get lat/lng from country or state mapping if not provided
+      let lat = r.latitude;
+      let lng = r.longitude;
+      
+      if (!lat || !lng) {
+        // Try state mapping first (more specific) - skip if "N/A", "No data", "Wi"/"WI", or "Distributed"
+        if (r.state && r.state !== "N/A" && r.state !== "No data" && r.state.toUpperCase() !== "WI" && r.state !== "Distributed") {
+          const stateCoords = getStateCoordinates(r.state.toUpperCase());
+          if (stateCoords) {
+            lat = lat || stateCoords.latitude;
+            lng = lng || stateCoords.longitude;
+          }
+        }
+        
+        // Fall back to country mapping if state not found - skip if "N/A" or "No data"
+        if (r.country && r.country !== "N/A" && r.country !== "No data" && (!lat || !lng)) {
+          const countryCoords = getCountryCoordinates(r.country);
+          if (countryCoords) {
+            lat = lat || countryCoords.latitude;
+            lng = lng || countryCoords.longitude;
+          }
+        }
+      }
+      
+      return {
+        name: r.account_name,
+        industry: r.industry,
+        size: normalizedSize as any,
+        tier: r.tier,
+        type: r.type,
+        state: r.state,
+        city: r.city,
+        country: r.country,
+        lat: lat,
+        lng: lng,
+        current_division: normalizedDivision as any,
+      };
+    });
+
+  // Remove duplicates based on name (keep first occurrence)
+  const uniqueAccounts = accountsToInsert.filter((account, index, self) => 
+    index === self.findIndex(a => a.name === account.name)
+  );
+
+  console.log(`Inserting ${uniqueAccounts.length} new accounts (keeping existing)...`);
+
+  const accountChunks = chunk(uniqueAccounts, BATCH_SIZE);
+  const allAccounts: Array<{ id: string; name: string }> = [];
+  let imported = 0;
+  const errors: any[] = [];
+
+  for (let i = 0; i < accountChunks.length; i++) {
+    console.log(`Processing accounts batch ${i + 1}/${accountChunks.length}...`);
+    const { data, error } = await supabase
+      .from("accounts")
+      .insert(accountChunks[i])
+      .select("id,name");
+
+    if (error) {
+      console.error(`Failed to insert accounts batch ${i + 1}:`, error);
+      errors.push({ batch: i + 1, error });
+    } else {
+      if (data) allAccounts.push(...data);
+      imported += accountChunks[i].length;
+    }
+  }
+
+  // Build name->id map
+  const accountMap = new Map(allAccounts.map(a => [a.name, a.id]));
+
+  // Insert revenue data for new accounts
+  const revenuesToInsert = rows
+    .filter(r => r.account_name && accountMap.has(r.account_name))
+    .map(r => ({
+      account_id: accountMap.get(r.account_name)!,
+      revenue_esg: r.revenue_ESG ?? 0,
+      revenue_gdt: r.revenue_GDT ?? 0,
+      revenue_gvc: r.revenue_GVC ?? 0,
+      revenue_msg_us: r.revenue_MSG_US ?? 0,
+    }));
+
+  // Remove duplicate revenues (keep first occurrence per account)
+  const uniqueRevenues = revenuesToInsert.filter((revenue, index, self) => 
+    index === self.findIndex(r => r.account_id === revenue.account_id)
+  );
+
+  console.log(`Inserting ${uniqueRevenues.length} account revenues...`);
+
+  const revenueChunks = chunk(uniqueRevenues, BATCH_SIZE);
+
+  for (let i = 0; i < revenueChunks.length; i++) {
+    console.log(`Processing revenues batch ${i + 1}/${revenueChunks.length}...`);
+    const { error } = await supabase
+      .from("account_revenues")
+      .insert(revenueChunks[i]);
+
+    if (error) {
+      console.error(`Failed to insert revenues batch ${i + 1}:`, error);
+      errors.push({ batch: i + 1, error });
+    }
+  }
+
+  console.log(`✓ Successfully inserted ${imported} accounts with ${uniqueRevenues.length} revenue records (existing preserved)`);
+
+  // Log audit event
+  if (userId) {
+    const auditData = createAuditLogData(
+      userId,
+      'data_import',
+      AUDIT_ENTITIES.ACCOUNT,
+      undefined,
+      null,
+      {
+        import_type: 'accounts_add',
+        records_count: imported,
+        revenue_records_count: uniqueRevenues.length,
+        operation: 'insert',
+      }
+    );
+    
+    await logAuditEvent(auditData);
+  }
+
+  return { imported, errors };
+}
+
+// ADD Mode: Import sellers without deleting existing ones
+async function importSellersAdd(rows: SellerRow[], userId?: string) {
+  const required = ["seller_name", "division", "size"];
+  for (const r of required) {
+    if (!(rows[0] as any)?.[r]) {
+      throw new Error(`Sellers file missing required column: ${r}`);
+    }
+  }
+
+  const divisionMap: Record<string, string> = {
+    "ESG": "ESG",
+    "GDT": "GDT",
+    "GVC": "GVC",
+    "MSG US": "MSG_US",
+    "MSG_US": "MSG_US",
+    "Mixed": "MIXED",
+  };
+
+  const sizeMap: Record<string, string> = {
+    "enterprise": "enterprise",
+    "Enterprise": "enterprise",
+    "ENTERPRISE": "enterprise",
+    "midmarket": "midmarket", 
+    "Midmarket": "midmarket",
+    "MIDMARKET": "midmarket",
+    "no_data": "no_data",
+    "No data": "no_data",
+    "No Data": "no_data",
+    "NO_DATA": "no_data",
+    "-": "midmarket",
+    "": "midmarket",
+    "N/A": "midmarket",
+    "Unknown": "midmarket",
+  };
+
+  const sellersToInsert = rows
+    .filter(r => r.seller_name)
+    .map(r => {
+      const normalizedDivision = divisionMap[r.division];
+      if (!normalizedDivision) {
+        throw new Error(`Invalid division: ${r.division}`);
+      }
+
+      const normalizedSize = sizeMap[r.size];
+      if (!normalizedSize) {
+        throw new Error(`Invalid size: ${r.size}. Must be 'enterprise' or 'midmarket'`);
+      }
+
+      // Get lat/lng from country or state mapping if not provided
+      let lat = r.latitude;
+      let lng = r.longitude;
+      
+      if (!lat || !lng) {
+        // Try state mapping first (more specific) - skip if "N/A", "No data", "Wi"/"WI", or "Distributed"
+        if (r.state && r.state !== "N/A" && r.state !== "No data" && r.state.toUpperCase() !== "WI" && r.state !== "Distributed") {
+          const stateCoords = getStateCoordinates(r.state.toUpperCase());
+          if (stateCoords) {
+            lat = lat || stateCoords.latitude;
+            lng = lng || stateCoords.longitude;
+          }
+        }
+        
+        // Fall back to country mapping if state not found - skip if "N/A" or "No data"
+        if (r.country && r.country !== "N/A" && r.country !== "No data" && (!lat || !lng)) {
+          const countryCoords = getCountryCoordinates(r.country);
+          if (countryCoords) {
+            lat = lat || countryCoords.latitude;
+            lng = lng || countryCoords.longitude;
+          }
+        }
+      }
+
+      return {
+        name: r.seller_name,
+        division: normalizedDivision as any,
+        size: normalizedSize as any,
+        industry_specialty: r.industry_specialty,
+        state: r.state,
+        city: r.city,
+        country: r.country,
+        lat: lat,
+        lng: lng,
+        tenure_months: r.hire_date ? calculateTenureMonths(r.hire_date) : null,
+        seniority_type: r.seniority_type || null,
+        manager_id: null, // Will be assigned later via ManagerTeam import
+      };
+    });
+
+  console.log(`Inserting ${sellersToInsert.length} new sellers (keeping existing)...`);
+
+  const sellerChunks = chunk(sellersToInsert, BATCH_SIZE);
+  let imported = 0;
+  const errors: any[] = [];
+
+  for (let i = 0; i < sellerChunks.length; i++) {
+    console.log(`Processing sellers batch ${i + 1}/${sellerChunks.length}...`);
+    const { error } = await supabase
+      .from("sellers")
+      .insert(sellerChunks[i]);
+
+    if (error) {
+      console.error(`Failed to insert sellers batch ${i + 1}:`, error);
+      errors.push({ batch: i + 1, error });
+    } else {
+      imported += sellerChunks[i].length;
+    }
+  }
+
+  console.log(`✓ Successfully inserted ${imported} new sellers (existing preserved)`);
+
+  // Log audit event
+  if (userId) {
+    const auditData = createAuditLogData(
+      userId,
+      'data_import',
+      AUDIT_ENTITIES.SELLER,
+      undefined,
+      null,
+      {
+        import_type: 'sellers_add',
+        records_count: imported,
+        operation: 'insert',
+      }
+    );
+    
+    await logAuditEvent(auditData);
+  }
+
+  return { imported, errors };
+}
+
+// ADD Mode: Import relationships without deleting existing ones
+async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
+  const required = ["account_name", "seller_name"];
+  for (const r of required) {
+    if (!(rows[0] as any)?.[r]) {
+      throw new Error(`Relationship file missing required column: ${r}`);
+    }
+  }
+
+  // Get all accounts and sellers for mapping
+  const { data: accounts } = await supabase.from("accounts").select("id,name");
+  const { data: sellers } = await supabase.from("sellers").select("id,name");
+
+  if (!accounts || !sellers) {
+    throw new Error("Failed to fetch accounts or sellers for relationship mapping");
+  }
+
+  const accountMap = new Map(accounts.map(a => [a.name, a.id]));
+  const sellerMap = new Map(sellers.map(s => [s.name, s.id]));
+
+  const relationshipsToInsert = rows
+    .filter(r => r.account_name && r.seller_name)
+    .map(r => ({
+      account_id: accountMap.get(r.account_name),
+      seller_id: sellerMap.get(r.seller_name),
+      status: r.status || "must_keep",
+    }))
+    .filter(r => r.account_id && r.seller_id)
+    .map(r => ({
+      account_id: r.account_id!,
+      seller_id: r.seller_id!,
+      status: r.status as any,
+    }));
+
+  console.log(`Inserting ${relationshipsToInsert.length} new relationships (keeping existing)...`);
+
+  const relChunks = chunk(relationshipsToInsert, BATCH_SIZE);
+  let imported = 0;
+  const errors: any[] = [];
+
+  for (let i = 0; i < relChunks.length; i++) {
+    console.log(`Processing relationships batch ${i + 1}/${relChunks.length}...`);
+    const { error } = await supabase
+      .from("relationship_maps")
+      .insert(relChunks[i]);
+
+    if (error) {
+      console.error(`Failed to insert relationships batch ${i + 1}:`, error);
+      errors.push({ batch: i + 1, error });
+    } else {
+      imported += relChunks[i].length;
+    }
+  }
+
+  console.log(`✓ Successfully inserted ${imported} new relationships (existing preserved)`);
+
+  // Log audit event
+  if (userId) {
+    const auditData = createAuditLogData(
+      userId,
+      'data_import',
+      AUDIT_ENTITIES.RELATIONSHIP,
+      undefined,
+      null,
+      {
+        import_type: 'relationships_add',
+        records_count: imported,
+        operation: 'insert',
+      }
+    );
+    
+    await logAuditEvent(auditData);
+  }
+
+  return { imported, errors };
+}
+
+// ADD Mode: Import manager team assignments without deleting existing ones
+async function importManagerTeamAdd(rows: ManagerTeamRow[], userId?: string) {
+  const required = ["manager_name", "seller_name"];
+  for (const r of required) {
+    if (!(rows[0] as any)?.[r]) {
+      throw new Error(`ManagerTeam file missing required column: ${r}`);
+    }
+  }
+
+  // Get all managers and sellers for mapping
+  const { data: managers } = await supabase.from("managers").select("id,name");
+  const { data: sellers } = await supabase.from("sellers").select("id,name");
+
+  if (!managers || !sellers) {
+    throw new Error("Failed to fetch managers or sellers for team assignment");
+  }
+
+  const managerMap = new Map(managers.map(m => [m.name, m.id]));
+  const sellerMap = new Map(sellers.map(s => [s.name, s.id]));
+
+  const updates = rows
+    .filter(r => r.manager_name && r.seller_name)
+    .map(r => ({
+      seller_id: sellerMap.get(r.seller_name),
+      manager_id: managerMap.get(r.manager_name),
+    }))
+    .filter(u => u.seller_id && u.manager_id);
+
+  console.log(`Updating ${updates.length} seller-manager assignments (keeping existing)...`);
+
+  let imported = 0;
+  const errors: any[] = [];
+
+  for (const update of updates) {
+    // Check if this seller-manager relationship already exists
+    const { data: existing } = await supabase
+      .from("seller_managers")
+      .select("id")
+      .eq("seller_id", update.seller_id!)
+      .eq("manager_id", update.manager_id!)
+      .single();
+
+    if (existing) {
+      console.log(`✓ Relationship already exists for seller ${update.seller_id} and manager ${update.manager_id}`);
+      imported++;
+      continue;
+    }
+
+    // Insert new seller-manager relationship
+    const { error } = await supabase
+      .from("seller_managers")
+      .insert({
+        seller_id: update.seller_id!,
+        manager_id: update.manager_id!,
+        is_primary: true // First manager is primary
+      });
+
+    if (error) {
+      console.error(`Failed to create seller-manager relationship:`, error);
+      errors.push({ seller_id: update.seller_id, manager_id: update.manager_id, error });
+    } else {
+      imported++;
+    }
+  }
+
+  console.log(`✓ Successfully updated ${imported} seller-manager assignments (existing preserved)`);
+
+  // Log audit event
+  if (userId) {
+    const auditData = createAuditLogData(
+      userId,
+      'data_import',
+      AUDIT_ENTITIES.MANAGER,
+      undefined,
+      null,
+      {
+        import_type: 'manager_team_add',
+        records_count: imported,
+        operation: 'update',
+      }
+    );
+    
+    await logAuditEvent(auditData);
+  }
+
+  return { imported, errors };
+}
+
+// ========== Individual Import Functions (Upsert Operations) ==========
+
+// Individual Sellers Import (Upsert - preserves existing relationships)
+export async function importSellersIndividual(file: File, userId?: string, onProgress?: ImportProgressCallback) {
+  const wb = await readSheet(file);
+  const rows = sheetToJson<SellerRow>(wb);
+
+  if (rows.length === 0) throw new Error("Sellers file is empty");
+
+  const required = ["seller_name", "division", "size"];
+  for (const r of required) {
+    if (!(rows[0] as any)?.[r]) {
+      throw new Error(`Sellers file missing required column: ${r}`);
+    }
+  }
+
+  const divisionMap: Record<string, string> = {
+    "ESG": "ESG",
+    "GDT": "GDT",
+    "GVC": "GVC",
+    "MSG US": "MSG_US",
+    "MSG_US": "MSG_US",
+    "Mixed": "MIXED",
+  };
+
+  const sizeMap: Record<string, string> = {
+    "enterprise": "enterprise",
+    "Enterprise": "enterprise",
+    "ENTERPRISE": "enterprise",
+    "midmarket": "midmarket", 
+    "Midmarket": "midmarket",
+    "MIDMARKET": "midmarket",
+    "no_data": "no_data",
+    "No data": "no_data",
+    "No Data": "no_data",
+    "NO_DATA": "no_data",
+    "-": "midmarket",
+    "": "midmarket",
+    "N/A": "midmarket",
+    "Unknown": "midmarket",
+  };
+
+  // Prepare seller data for upsert
+  const sellersToUpsert = rows
+    .filter(r => r.seller_name)
+    .map(r => {
+      const normalizedDivision = divisionMap[r.division];
+      if (!normalizedDivision) {
+        throw new Error(`Invalid division: ${r.division}`);
+      }
+
+      const normalizedSize = sizeMap[r.size];
+      if (!normalizedSize) {
+        throw new Error(`Invalid size: ${r.size}. Must be 'enterprise' or 'midmarket'`);
+      }
+
+      return {
+        name: r.seller_name,
+        division: normalizedDivision as any,
+        size: normalizedSize as any,
+        industry_specialty: r.industry_specialty,
+        state: r.state,
+        city: r.city,
+        country: r.country,
+        lat: r.latitude,
+        lng: r.longitude,
+        tenure_months: r.hire_date ? calculateTenureMonths(r.hire_date) : null,
+        seniority_type: r.seniority_type || null,
+        // Note: manager_id is preserved from existing data during upsert
+      };
+    });
+
+  console.log(`Upserting ${sellersToUpsert.length} sellers (preserving existing relationships)...`);
+
+  // Batch upsert sellers (preserves existing manager_id and relationships)
+  const sellerChunks = chunk(sellersToUpsert, BATCH_SIZE);
+
+  for (let i = 0; i < sellerChunks.length; i++) {
+    console.log(`Processing sellers batch ${i + 1}/${sellerChunks.length}...`);
+    const { error } = await supabase
+      .from("sellers")
+      .upsert(sellerChunks[i], { onConflict: "name" });
+
+    if (error) throw new Error(`Failed to upsert sellers batch ${i + 1}: ${error.message}`);
+  }
+
+  console.log(`✓ Successfully upserted ${sellersToUpsert.length} sellers (existing relationships preserved)`);
+
+  // Refresh materialized views to update dashboard data
+  try {
+    console.log('🔄 Refreshing materialized views...');
+    await supabase.rpc('refresh_performance_views');
+    console.log('✅ Materialized views refreshed successfully');
+  } catch (refreshError) {
+    console.error('❌ Error refreshing materialized views:', refreshError);
+    // Don't fail the import if refresh fails
+  }
+
+  // Log audit event
+  if (userId) {
+    const auditData = createAuditLogData(
+      userId,
+      'data_import',
+      AUDIT_ENTITIES.SELLER,
+      undefined,
+      null,
+      {
+        import_type: 'sellers_individual',
+        records_count: sellersToUpsert.length,
+        file_name: file.name,
+        file_size: file.size,
+        operation: 'upsert',
+      }
+    );
+    
+    await logAuditEvent(auditData);
+  }
+}
+
+// Individual Accounts Import (Upsert - preserves existing relationships)
+export async function importAccountsIndividual(file: File, userId?: string, onProgress?: ImportProgressCallback) {
+  const wb = await readSheet(file);
+  const rows = sheetToJson<AccountRow>(wb);
+
+  if (rows.length === 0) throw new Error("Accounts file is empty");
+
+  const required = ["account_name", "size", "current_division"];
+  for (const r of required) {
+    if (!(rows[0] as any)?.[r]) {
+      throw new Error(`Accounts file missing required column: ${r}`);
+    }
+  }
+
+  const divisionMap: Record<string, string> = {
+    "ESG": "ESG",
+    "GDT": "GDT",
+    "GVC": "GVC",
+    "MSG US": "MSG_US",
+    "MSG_US": "MSG_US",
+    "Mixed": "MIXED",
+  };
+
+  const sizeMap: Record<string, string> = {
+    "enterprise": "enterprise",
+    "Enterprise": "enterprise",
+    "ENTERPRISE": "enterprise",
+    "midmarket": "midmarket", 
+    "Midmarket": "midmarket",
+    "MIDMARKET": "midmarket",
+    "no_data": "no_data",
+    "No data": "no_data",
+    "No Data": "no_data",
+    "NO_DATA": "no_data",
+    "-": "no_data",
+    "": "no_data",
+    "N/A": "no_data",
+    "Unknown": "no_data",
+  };
+
+  // Prepare account data for upsert
+  const accountsToUpsert = rows
+    .filter(r => r.account_name)
+    .map(r => {
+      const normalizedDivision = divisionMap[r.current_division];
+      if (!normalizedDivision) {
+        throw new Error(`Invalid division: ${r.current_division}`);
+      }
+      
+      const normalizedSize = sizeMap[r.size];
+      if (!normalizedSize) {
+        throw new Error(`Invalid size: ${r.size}. Must be 'enterprise' or 'midmarket'`);
+      }
+      
+      return {
+        name: r.account_name,
+        industry: r.industry,
+        size: normalizedSize as any,
+        tier: r.tier,
+        type: r.type,
+        state: r.state,
+        city: r.city,
+        country: r.country,
+        lat: r.latitude,
+        lng: r.longitude,
+        current_division: normalizedDivision as any,
+      };
+    });
+
+  // Remove duplicates based on name (keep first occurrence)
+  const uniqueAccounts = accountsToUpsert.filter((account, index, self) => 
+    index === self.findIndex(a => a.name === account.name)
+  );
+
+  console.log(`Upserting ${uniqueAccounts.length} accounts (preserving existing relationships)...`);
+
+  // Batch upsert accounts (preserves existing relationships)
+  const accountChunks = chunk(uniqueAccounts, BATCH_SIZE);
+  const allAccounts: Array<{ id: string; name: string }> = [];
+
+  for (let i = 0; i < accountChunks.length; i++) {
+    console.log(`Processing accounts batch ${i + 1}/${accountChunks.length}...`);
+    const { data, error } = await supabase
+      .from("accounts")
+      .upsert(accountChunks[i], { onConflict: "name" })
+      .select("id,name");
+
+    if (error) throw new Error(`Failed to upsert accounts batch ${i + 1}: ${error.message}`);
+    if (data) allAccounts.push(...data);
+  }
+
+  // Build name->id map
+  const accountMap = new Map(allAccounts.map(a => [a.name, a.id]));
+
+  // Prepare revenue data for upsert
+  const revenuesToUpsert = rows
+    .filter(r => r.account_name && accountMap.has(r.account_name))
+    .map(r => ({
+      account_id: accountMap.get(r.account_name)!,
+      revenue_esg: r.revenue_ESG ?? 0,
+      revenue_gdt: r.revenue_GDT ?? 0,
+      revenue_gvc: r.revenue_GVC ?? 0,
+      revenue_msg_us: r.revenue_MSG_US ?? 0,
+    }));
+
+  // Remove duplicate revenues (keep first occurrence per account)
+  const uniqueRevenues = revenuesToUpsert.filter((revenue, index, self) => 
+    index === self.findIndex(r => r.account_id === revenue.account_id)
+  );
+
+  console.log(`Upserting ${uniqueRevenues.length} account revenues...`);
+
+  // Batch upsert revenues
+  const revenueChunks = chunk(uniqueRevenues, BATCH_SIZE);
+
+  for (let i = 0; i < revenueChunks.length; i++) {
+    console.log(`Processing revenues batch ${i + 1}/${revenueChunks.length}...`);
+    const { error } = await supabase
+      .from("account_revenues")
+      .upsert(revenueChunks[i], { onConflict: "account_id" });
+
+    if (error) throw new Error(`Failed to upsert revenues batch ${i + 1}: ${error.message}`);
+  }
+
+  console.log(`✓ Successfully upserted ${uniqueAccounts.length} accounts with ${uniqueRevenues.length} revenue records (existing relationships preserved)`);
+
+  // Refresh materialized views to update dashboard data
+  try {
+    console.log('🔄 Refreshing materialized views...');
+    await supabase.rpc('refresh_performance_views');
+    console.log('✅ Materialized views refreshed successfully');
+  } catch (refreshError) {
+    console.error('❌ Error refreshing materialized views:', refreshError);
+    // Don't fail the import if refresh fails
+  }
+
+  // Log audit event
+  if (userId) {
+    const auditData = createAuditLogData(
+      userId,
+      'data_import',
+      AUDIT_ENTITIES.ACCOUNT,
+      undefined,
+      null,
+      {
+        import_type: 'accounts_individual',
+        records_count: uniqueAccounts.length,
+        file_name: file.name,
+        file_size: file.size,
+        revenue_records_count: uniqueRevenues.length,
+        operation: 'upsert',
+      }
+    );
+    
+    await logAuditEvent(auditData);
+  }
+}
+
+// ========== Country & State Mapping ==========
+import countryMap from '../../countrymap.json';
+import countryIso from '../../countryiso.json';
+import stateMap from '../../statemap.json';
+
+interface CountryMapping {
+  country: string;
+  latitude: number;
+  longitude: number;
+}
+
+interface CountryIso {
+  Name: string;
+  Code: string;
+}
+
+interface StateMapping {
+  state: string;
+  latitude: number;
+  longitude: number;
+  name: string;
+}
+
+// Get country mapping for lat/lng lookup
+export function getCountryCoordinates(countryCode: string): { latitude: number; longitude: number } | null {
+  const mapping = (countryMap as CountryMapping[]).find(c => c.country === countryCode);
+  return mapping ? { latitude: mapping.latitude, longitude: mapping.longitude } : null;
+}
+
+// Get state mapping for lat/lng lookup
+export function getStateCoordinates(stateCode: string): { latitude: number; longitude: number } | null {
+  const mapping = (stateMap as StateMapping[]).find(s => s.state === stateCode);
+  return mapping ? { latitude: mapping.latitude, longitude: mapping.longitude } : null;
+}
+
+// Get all available country codes for dropdown
+export function getAvailableCountryCodes(): string[] {
+  const countryCodes = (countryMap as CountryMapping[]).map(c => c.country);
+  return ["N/A", ...countryCodes]; // Add "N/A" option
+}
+
+// Get all available state codes for dropdown
+export function getAvailableStateCodes(): string[] {
+  const stateCodes = (stateMap as StateMapping[]).map(s => s.state);
+  return ["N/A", ...stateCodes]; // Add "N/A" option
+}
+
+// Get country reference data for template
+export function getCountryReferenceData(): Array<{country_name: string, country_code: string}> {
+  const countryData = (countryIso as CountryIso[]).map(c => ({
+    country_name: c.Name,
+    country_code: c.Code
+  }));
+  
+  // Add "No data" option at the beginning
+  return [
+    { country_name: "No data", country_code: "N/A" },
+    ...countryData
+  ];
+}
+
+// Get state reference data for template
+export function getStateReferenceData(): Array<{state_name: string, state_code: string}> {
+  const stateData = (stateMap as StateMapping[]).map(s => ({
+    state_name: s.name,
+    state_code: s.state
+  }));
+  
+  // Add "No data" option at the beginning
+  return [
+    { state_name: "No data", state_code: "N/A" },
+    ...stateData
+  ];
+}
+
+
+// Calculate tenure months from hire date
+export function calculateTenureMonths(hireDate: string | Date | number): number | null {
+  if (!hireDate) return null;
+  
+  // Debug logging to help identify data types from Excel
+  console.log('calculateTenureMonths input:', { 
+    value: hireDate, 
+    type: typeof hireDate, 
+    isDate: hireDate instanceof Date 
+  });
+  
+  try {
+    let hire: Date;
+    
+    // Handle different input types
+    if (typeof hireDate === 'string') {
+      // Handle mm/dd/yy format specifically
+      if (hireDate.includes('/')) {
+        const parts = hireDate.split('/');
+        if (parts.length === 3) {
+          const month = parseInt(parts[0], 10);
+          const day = parseInt(parts[1], 10);
+          let year = parseInt(parts[2], 10);
+          
+          // Convert 2-digit year to 4-digit year
+          if (year < 100) {
+            // Assume years 00-30 are 2000-2030, years 31-99 are 1931-1999
+            year += year <= 30 ? 2000 : 1900;
+          }
+          
+          hire = new Date(year, month - 1, day); // month is 0-indexed in Date constructor
+        } else {
+          hire = new Date(hireDate);
+        }
+      } else {
+        hire = new Date(hireDate);
+      }
+    } else if (typeof hireDate === 'number') {
+      // Handle Excel serial number dates (days since 1900-01-01)
+      // Excel serial numbers for dates are typically > 1 (1900-01-01 = 1)
+      if (hireDate > 1 && hireDate < 100000) {
+        // This looks like an Excel serial number
+        const excelEpoch = new Date(1900, 0, 1); // January 1, 1900
+        hire = new Date(excelEpoch.getTime() + (hireDate - 2) * 24 * 60 * 60 * 1000);
+      } else {
+        // Treat as timestamp
+        hire = new Date(hireDate);
+      }
+    } else if (hireDate instanceof Date) {
+      // Already a Date object
+      hire = hireDate;
+    } else {
+      // Fallback to Date constructor
+      hire = new Date(hireDate);
+    }
+    
+    const now = new Date();
+    
+    // Check if the date is valid
+    if (isNaN(hire.getTime())) return null;
+    
+    // Calculate the difference in months
+    const yearDiff = now.getFullYear() - hire.getFullYear();
+    const monthDiff = now.getMonth() - hire.getMonth();
+    const totalMonths = yearDiff * 12 + monthDiff;
+    
+    // Ensure non-negative result
+    return Math.max(0, totalMonths);
+  } catch (error) {
+    console.error('Error calculating tenure months:', error);
+    return null;
   }
 }
 
@@ -895,9 +2359,7 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
           type: "Strategic",
           state: "CA",
           city: "San Francisco",
-          country: "United States",
-          latitude: 37.7749,
-          longitude: -122.4194,
+          country: "US", // ISO code - lat/lng will be auto-mapped
           current_division: "ESG",
           revenue_ESG: 1000000,
           revenue_GDT: 500000,
@@ -918,10 +2380,9 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
           industry_specialty: "Financial Services",
           state: "NY",
           city: "New York",
-          country: "United States",
-          latitude: 40.7128,
-          longitude: -74.0060,
-          tenure_months: 24
+          country: "US", // ISO code - lat/lng will be auto-mapped
+          hire_date: "01/15/22", // Will be converted to tenure_months automatically
+          seniority_type: "senior" // junior or senior
         }
       ];
       filename = "Sellers_Template.xlsx";
@@ -969,6 +2430,17 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
   
   // Add the worksheet to workbook
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  
+  // Add Country and State Reference tabs for accounts and sellers templates
+  if (type === "accounts" || type === "sellers") {
+    const countryReferenceData = getCountryReferenceData();
+    const countryWs = XLSX.utils.json_to_sheet(countryReferenceData);
+    XLSX.utils.book_append_sheet(wb, countryWs, "Country_Reference");
+    
+    const stateReferenceData = getStateReferenceData();
+    const stateWs = XLSX.utils.json_to_sheet(stateReferenceData);
+    XLSX.utils.book_append_sheet(wb, stateWs, "State_Reference");
+  }
   
   // Add helpful comments for name-based imports
   if (type === "relmap") {
@@ -1025,9 +2497,7 @@ export function downloadComprehensiveTemplate() {
       type: "Strategic",
       state: "CA",
       city: "San Francisco",
-      country: "United States",
-      latitude: 37.7749,
-      longitude: -122.4194,
+      country: "US", // ISO code - lat/lng will be auto-mapped
       current_division: "ESG",
       revenue_ESG: 1000000,
       revenue_GDT: 500000,
@@ -1042,9 +2512,7 @@ export function downloadComprehensiveTemplate() {
       type: "Growth",
       state: "NY",
       city: "New York",
-      country: "United States",
-      latitude: 40.7128,
-      longitude: -74.0060,
+      country: "US", // ISO code - lat/lng will be auto-mapped
       current_division: "GDT",
       revenue_ESG: 0,
       revenue_GDT: 800000,
@@ -1065,10 +2533,9 @@ export function downloadComprehensiveTemplate() {
       industry_specialty: "Financial Services",
       state: "NY",
       city: "New York",
-      country: "United States",
-      latitude: 40.7128,
-      longitude: -74.0060,
-      tenure_months: 24
+      country: "US", // ISO code - lat/lng will be auto-mapped
+      hire_date: "01/15/22", // Will be converted to tenure_months automatically
+      seniority_type: "senior" // junior or senior
     },
     {
       seller_name: "Sarah Johnson",
@@ -1077,10 +2544,9 @@ export function downloadComprehensiveTemplate() {
       industry_specialty: "Technology",
       state: "CA",
       city: "San Francisco",
-      country: "United States",
-      latitude: 37.7749,
-      longitude: -122.4194,
-      tenure_months: 18
+      country: "US", // ISO code - lat/lng will be auto-mapped
+      hire_date: "07/01/22", // Will be converted to tenure_months automatically
+      seniority_type: "junior" // junior or senior
     }
   ];
   
@@ -1154,7 +2620,7 @@ export function downloadComprehensiveTemplate() {
     [""],
     ["REQUIRED FIELDS:"],
     ["• Accounts: account_name, size, current_division"],
-    ["• Sellers: seller_name, division, size"],
+    ["• Sellers: seller_name, division, size, hire_date"],
     ["• Managers: manager_name, manager_email"],
     ["• Relationship_Map: account_name, seller_name, status"],
     ["• Manager_Team: manager_name, seller_name"],
@@ -1167,11 +2633,24 @@ export function downloadComprehensiveTemplate() {
     ["IMPORTANT NOTES:"],
     ["• Manager emails must match existing user profiles"],
     ["• Account and seller names must match exactly between tabs"],
-    ["• Latitude/longitude are optional but recommended for mapping"]
+    ["• Use ISO country codes (e.g., 'US', 'CA', 'GB') or 'N/A' for no data - see Country_Reference tab"],
+    ["• Use state codes (e.g., 'CA', 'NY', 'TX') or 'N/A' for no data - see State_Reference tab"],
+    ["• Use hire_date in MM/DD/YY format (e.g., '01/15/22') - tenure_months calculated automatically"],
+    ["• Use seniority_type: 'junior' or 'senior' - determines revenue targets and account limits"],
+    ["• Latitude/longitude will be automatically mapped from country/state codes"]
   ];
   
   const instructionsWs = XLSX.utils.json_to_sheet(instructionsData);
   XLSX.utils.book_append_sheet(wb, instructionsWs, "Instructions");
+  
+  // Add Country and State Reference tabs
+  const countryReferenceData = getCountryReferenceData();
+  const countryWs = XLSX.utils.json_to_sheet(countryReferenceData);
+  XLSX.utils.book_append_sheet(wb, countryWs, "Country_Reference");
+  
+  const stateReferenceData = getStateReferenceData();
+  const stateWs = XLSX.utils.json_to_sheet(stateReferenceData);
+  XLSX.utils.book_append_sheet(wb, stateWs, "State_Reference");
   
   // Generate and download file
   XLSX.writeFile(wb, "BAIN_Data_Import_Template.xlsx");
@@ -1179,16 +2658,16 @@ export function downloadComprehensiveTemplate() {
 
 // ========== Comprehensive Import Function ==========
 
-export async function importComprehensiveData(file: File, userId?: string) {
-  console.log("🚀 Starting Comprehensive Data Import");
-  console.log("📁 File:", file.name, "Size:", file.size, "bytes");
-  console.log("👤 User ID:", userId);
-  console.log("⏰ Start Time:", new Date().toISOString());
+export async function importComprehensiveData(file: File, userId?: string, onProgress?: ImportProgressCallback) {
+  onProgress?.("🚀 Starting Comprehensive Data Import");
+  onProgress?.(`📁 File: ${file.name}, Size: ${file.size} bytes`);
+  onProgress?.(`👤 User ID: ${userId}`);
+  onProgress?.(`⏰ Start Time: ${new Date().toISOString()}`);
   
   const wb = await readSheet(file);
   
-  console.log("📊 Available sheets:", wb.SheetNames);
-  console.log("📋 Sheet count:", wb.SheetNames.length);
+  onProgress?.(`📊 Available sheets: ${wb.SheetNames.join(', ')}`);
+  onProgress?.(`📋 Sheet count: ${wb.SheetNames.length}`);
   
   const results = {
     accounts: { imported: 0, errors: [] as string[] },
@@ -1459,6 +2938,16 @@ export async function importComprehensiveData(file: File, userId?: string) {
       console.log("⚠️ No Manager_Team sheet found in Excel file");
     }
     
+    // Refresh materialized views to update dashboard data
+    console.log("🔄 Refreshing materialized views after comprehensive import...");
+    try {
+      await supabase.rpc('refresh_performance_views');
+      console.log("✅ Materialized views refreshed successfully");
+    } catch (refreshError) {
+      console.error("❌ Error refreshing materialized views:", refreshError);
+      // Don't fail the import if refresh fails
+    }
+
     // Log comprehensive audit event
     console.log("📝 Logging comprehensive audit event...");
     if (userId) {
@@ -1504,11 +2993,218 @@ export async function importComprehensiveData(file: File, userId?: string) {
       });
     }
     
+    // Refresh materialized views to update dashboard data
+    try {
+      console.log('🔄 Refreshing materialized views...');
+      await supabase.rpc('refresh_performance_views');
+      console.log('✅ Materialized views refreshed successfully');
+    } catch (refreshError) {
+      console.error('❌ Error refreshing materialized views:', refreshError);
+      // Don't fail the import if refresh fails
+    }
+    
     return results;
     
   } catch (error) {
     console.error("💥 COMPREHENSIVE IMPORT FAILED:", error);
     console.error("⏰ Failure Time:", new Date().toISOString());
+    throw error;
+  }
+}
+
+// ========== EXPORT FUNCTIONS ==========
+
+/**
+ * Export complete accounts table with assigned sellers (all statuses)
+ * This exports all account fields plus the assigned seller information for all relationship statuses
+ * Includes accounts without assigned sellers (with blank seller/manager columns)
+ */
+export async function exportCompleteAccountsWithAssignedSellers() {
+  try {
+    console.log("📊 Starting export of complete accounts with assigned sellers...");
+    
+    // Get ALL accounts with pagination to handle 1000+ records
+    let allAccounts: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    
+    console.log("📥 Fetching all accounts with pagination...");
+    while (hasMore) {
+      const { data: accountsBatch, error } = await supabase
+        .from('accounts')
+        .select(`
+          id,
+          name,
+          city,
+          country,
+          current_division,
+          industry,
+          lat,
+          lng,
+          size,
+          state,
+          tier,
+          type,
+          created_at,
+          account_revenues (
+            revenue_esg,
+            revenue_gdt,
+            revenue_gvc,
+            revenue_msg_us
+          ),
+          relationship_maps (
+            seller_id,
+            status,
+            sellers (
+              id,
+              name,
+              division,
+              size,
+              industry_specialty,
+              city,
+              state,
+              country,
+              manager_id,
+              managers (
+                id,
+                name
+              )
+            )
+          )
+        `)
+        .range(from, from + limit - 1)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("❌ Error fetching accounts batch:", error);
+        throw new Error(`Failed to fetch accounts: ${error.message}`);
+      }
+
+      if (accountsBatch && accountsBatch.length > 0) {
+        allAccounts = allAccounts.concat(accountsBatch);
+        from += limit;
+        console.log(`📊 Fetched ${accountsBatch.length} accounts (total: ${allAccounts.length})`);
+      } else {
+        hasMore = false;
+      }
+    }
+
+    if (!allAccounts || allAccounts.length === 0) {
+      console.log("⚠️ No accounts found");
+      return null;
+    }
+
+    console.log(`✅ Found ${allAccounts.length} accounts (including those without assigned sellers)`);
+
+    // Transform the data into a flat structure for Excel export
+    const exportData = allAccounts.map((account: any) => {
+      // Get the first relationship (if any exists)
+      const relationship = account.relationship_maps && account.relationship_maps.length > 0 ? account.relationship_maps[0] : null;
+      const seller = relationship?.sellers;
+      const manager = seller?.managers;
+      const revenue = account.account_revenues;
+
+      return {
+        // Account fields
+        account_id: account.id,
+        account_name: account.name,
+        account_city: account.city,
+        account_country: account.country,
+        account_current_division: account.current_division,
+        account_industry: account.industry,
+        account_lat: account.lat,
+        account_lng: account.lng,
+        account_size: account.size,
+        account_state: account.state,
+        account_tier: account.tier,
+        account_type: account.type,
+        account_created_at: account.created_at,
+        
+        // Revenue fields
+        revenue_esg: revenue?.revenue_esg || 0,
+        revenue_gdt: revenue?.revenue_gdt || 0,
+        revenue_gvc: revenue?.revenue_gvc || 0,
+        revenue_msg_us: revenue?.revenue_msg_us || 0,
+        total_revenue: (revenue?.revenue_esg || 0) + (revenue?.revenue_gdt || 0) + (revenue?.revenue_gvc || 0) + (revenue?.revenue_msg_us || 0),
+        
+        // Assigned seller fields (blank if no assigned seller)
+        assigned_seller_id: seller?.id || '',
+        assigned_seller_name: seller?.name || '',
+        assigned_seller_division: seller?.division || '',
+        assigned_seller_size: seller?.size || '',
+        assigned_seller_industry_specialty: seller?.industry_specialty || '',
+        assigned_seller_city: seller?.city || '',
+        assigned_seller_state: seller?.state || '',
+        assigned_seller_country: seller?.country || '',
+        assigned_seller_manager_id: seller?.manager_id || '',
+        assigned_seller_manager_name: manager?.name || '',
+        relationship_status: relationship?.status || ''
+      };
+    });
+
+    // Create Excel workbook
+    const wb = XLSX.utils.book_new();
+    
+    // Create worksheet
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    
+    // Set column widths for better readability
+    const colWidths = [
+      { wch: 36 }, // account_id
+      { wch: 30 }, // account_name
+      { wch: 15 }, // account_city
+      { wch: 15 }, // account_country
+      { wch: 15 }, // account_current_division
+      { wch: 20 }, // account_industry
+      { wch: 12 }, // account_lat
+      { wch: 12 }, // account_lng
+      { wch: 12 }, // account_size
+      { wch: 15 }, // account_state
+      { wch: 15 }, // account_tier
+      { wch: 15 }, // account_type
+      { wch: 20 }, // account_created_at
+      { wch: 15 }, // revenue_esg
+      { wch: 15 }, // revenue_gdt
+      { wch: 15 }, // revenue_gvc
+      { wch: 15 }, // revenue_msg_us
+      { wch: 15 }, // total_revenue
+      { wch: 36 }, // assigned_seller_id
+      { wch: 25 }, // assigned_seller_name
+      { wch: 15 }, // assigned_seller_division
+      { wch: 15 }, // assigned_seller_size
+      { wch: 20 }, // assigned_seller_industry_specialty
+      { wch: 15 }, // assigned_seller_city
+      { wch: 15 }, // assigned_seller_state
+      { wch: 15 }, // assigned_seller_country
+      { wch: 36 }, // assigned_seller_manager_id
+      { wch: 25 }, // assigned_seller_manager_name
+      { wch: 15 }  // relationship_status
+    ];
+    ws['!cols'] = colWidths;
+    
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, "Accounts_With_Assigned_Sellers");
+    
+    // Generate Excel file
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    
+    // Create blob and download
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Complete_Accounts_With_Assigned_Sellers_${new Date().toISOString().split('T')[0]}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    
+    console.log(`✅ Successfully exported ${exportData.length} accounts (including those without assigned sellers)`);
+    return { exported: exportData.length, filename: link.download };
+    
+  } catch (error) {
+    console.error("❌ Error exporting complete accounts with assigned sellers:", error);
     throw error;
   }
 }

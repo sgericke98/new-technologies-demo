@@ -301,10 +301,10 @@ export function AuditLogTable({
                           <User className="h-4 w-4 text-slate-400" />
                           <div>
                             <div className="font-medium text-sm">
-                              {(log as any).profiles?.name || 'Unknown User'}
+                              {log.profiles?.name || 'Unknown User'}
                             </div>
                             <div className="text-xs text-slate-500">
-                              {(log as any).profiles?.email || 'No email'}
+                              {log.profiles?.email || 'No email'}
                             </div>
                           </div>
                         </div>
@@ -366,7 +366,7 @@ export function AuditLogTable({
                                   <div>
                                     <Label className="text-sm font-medium">User</Label>
                                     <p className="text-sm text-slate-600">
-                                      {(log as any).profiles?.name || 'Unknown User'}
+                                      {log.profiles?.name || 'Unknown User'}
                                     </p>
                                   </div>
                                   <div>

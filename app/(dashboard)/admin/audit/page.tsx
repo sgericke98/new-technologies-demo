@@ -23,6 +23,7 @@ import Link from 'next/link';
 import { AuditLogTable } from '@/components/audit/AuditLogTable';
 import { AuditStats } from '@/components/audit/AuditStats';
 import { PageLoader } from '@/components/ui/loader';
+import { LoadingTimeout } from '@/components/ui/loading-timeout';
 import { 
   getAuditLogs, 
   getAuditStats, 
@@ -30,6 +31,7 @@ import {
   AUDIT_ACTIONS,
   AUDIT_ENTITIES 
 } from '@/lib/audit';
+import { getAuditStatsOptimized } from '@/lib/optimized-queries';
 
 interface AuditFilters {
   entity?: string;
@@ -63,8 +65,13 @@ export default function AuditPage() {
 
   useEffect(() => {
     if (isAdmin) {
-      fetchAuditData();
-      fetchStats();
+      // Add debouncing to prevent excessive API calls
+      const timeoutId = setTimeout(() => {
+        fetchAuditData();
+        fetchStats();
+      }, 300); // 300ms debounce
+
+      return () => clearTimeout(timeoutId);
     }
   }, [isAdmin, filters, currentPage]);
 
@@ -73,13 +80,20 @@ export default function AuditPage() {
       setDataLoading(true);
       const offset = (currentPage - 1) * ITEMS_PER_PAGE;
       
-      const auditLogs = await getAuditLogs({
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 10000)
+      );
+      
+      const auditLogsPromise = getAuditLogs({
         ...filters,
         limit: ITEMS_PER_PAGE,
         offset,
         order_by: 'created_at',
         order_direction: 'desc',
       });
+
+      const auditLogs = await Promise.race([auditLogsPromise, timeoutPromise]) as any[];
 
       setLogs(auditLogs);
       
@@ -90,7 +104,9 @@ export default function AuditPage() {
       console.error('Error fetching audit logs:', error);
       toast({
         title: 'Error',
-        description: 'Failed to load audit logs',
+        description: error instanceof Error && error.message === 'Request timeout' 
+          ? 'Request timed out. Please try again.' 
+          : 'Failed to load audit logs',
         variant: 'destructive',
       });
     } finally {
@@ -101,13 +117,23 @@ export default function AuditPage() {
   const fetchStats = async () => {
     try {
       setStatsLoading(true);
-      const auditStats = await getAuditStats();
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 10000)
+      );
+      
+      const statsPromise = getAuditStatsOptimized();
+      const auditStats = await Promise.race([statsPromise, timeoutPromise]) as any;
+      
       setStats(auditStats);
     } catch (error) {
       console.error('Error fetching audit stats:', error);
       toast({
         title: 'Error',
-        description: 'Failed to load audit statistics',
+        description: error instanceof Error && error.message === 'Request timeout' 
+          ? 'Request timed out. Please try again.' 
+          : 'Failed to load audit statistics',
         variant: 'destructive',
       });
     } finally {
@@ -141,10 +167,42 @@ export default function AuditPage() {
 
   const handleExport = async () => {
     try {
-      // In a real implementation, you'd call an API endpoint to export data
+      setDataLoading(true);
       toast({
         title: 'Export Started',
-        description: 'Audit data export is being prepared...',
+        description: 'Preparing audit data for download...',
+      });
+
+      // Fetch all audit logs for export (without pagination)
+      const allLogs = await getAuditLogs({
+        ...filters,
+        limit: 10000, // Large limit to get all data
+        order_by: 'created_at',
+        order_direction: 'desc',
+      });
+
+      // Convert to Excel format
+      const excelContent = convertToExcel(allLogs);
+      
+      // Create and download the file
+      const blob = new Blob([excelContent], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `audit-logs-${new Date().toISOString().split('T')[0]}.xlsx`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      const filterInfo = Object.entries(filters)
+        .filter(([_, value]) => value)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(', ');
+
+      toast({
+        title: 'Export Complete',
+        description: `Downloaded ${allLogs.length} audit records${filterInfo ? ` (filtered by: ${filterInfo})` : ''}`,
       });
     } catch (error) {
       console.error('Error exporting audit data:', error);
@@ -153,14 +211,124 @@ export default function AuditPage() {
         description: 'Failed to export audit data',
         variant: 'destructive',
       });
+    } finally {
+      setDataLoading(false);
     }
+  };
+
+  // Helper function to convert audit logs to Excel format
+  const convertToExcel = (logs: AuditLog[]) => {
+    // Create Excel-compatible HTML with proper formatting
+    const headers = [
+      'ID',
+      'User',
+      'User Email', 
+      'User Role',
+      'Action',
+      'Entity',
+      'Entity ID',
+      'Before',
+      'After',
+      'Created At'
+    ];
+
+    const rows = logs.map(log => [
+      log.id,
+      log.profiles?.name || 'Unknown',
+      log.profiles?.email || 'Unknown',
+      log.profiles?.role || 'Unknown',
+      log.action,
+      log.entity,
+      log.entity_id || '',
+      log.before ? JSON.stringify(log.before, null, 2) : '',
+      log.after ? JSON.stringify(log.after, null, 2) : '',
+      new Date(log.created_at).toLocaleString()
+    ]);
+
+    // Create Excel-compatible HTML
+    const excelHtml = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" 
+            xmlns:x="urn:schemas-microsoft-com:office:excel" 
+            xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+          <meta charset="utf-8">
+          <meta name="ProgId" content="Excel.Sheet">
+          <meta name="Generator" content="Microsoft Excel 11">
+          <!--[if gte mso 9]>
+          <xml>
+            <x:ExcelWorkbook>
+              <x:ExcelWorksheets>
+                <x:ExcelWorksheet>
+                  <x:Name>Audit Logs</x:Name>
+                  <x:WorksheetOptions>
+                    <x:DefaultRowHeight>285</x:DefaultRowHeight>
+                    <x:Selected/>
+                    <x:FreezePanes/>
+                    <x:FrozenNoSplit/>
+                    <x:SplitHorizontal>1</x:SplitHorizontal>
+                    <x:TopRowBottomPane>1</x:TopRowBottomPane>
+                    <x:SplitVertical>0</x:SplitVertical>
+                    <x:LeftColumnRightPane>0</x:LeftColumnRightPane>
+                    <x:ActivePane>0</x:ActivePane>
+                    <x:Panes>
+                      <x:Pane>
+                        <x:Number>3</x:Number>
+                      </x:Pane>
+                    </x:Panes>
+                    <x:ProtectObjects>False</x:ProtectObjects>
+                    <x:ProtectScenarios>False</x:ProtectScenarios>
+                  </x:WorksheetOptions>
+                </x:ExcelWorksheet>
+              </x:ExcelWorksheets>
+            </x:ExcelWorkbook>
+          </xml>
+          <![endif]-->
+          <style>
+            table { border-collapse: collapse; width: 100%; }
+            th { background-color: #4472C4; color: white; font-weight: bold; text-align: center; padding: 8px; border: 1px solid #000; }
+            td { padding: 6px; border: 1px solid #000; vertical-align: top; }
+            .date { text-align: center; }
+            .json { font-family: monospace; font-size: 10px; white-space: pre-wrap; }
+          </style>
+        </head>
+        <body>
+          <table>
+            <thead>
+              <tr>
+                ${headers.map(header => `<th>${header}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(row => 
+                `<tr>
+                  <td>${row[0]}</td>
+                  <td>${row[1]}</td>
+                  <td>${row[2]}</td>
+                  <td>${row[3]}</td>
+                  <td>${row[4]}</td>
+                  <td>${row[5]}</td>
+                  <td>${row[6]}</td>
+                  <td class="json">${row[7]}</td>
+                  <td class="json">${row[8]}</td>
+                  <td class="date">${row[9]}</td>
+                </tr>`
+              ).join('')}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    return excelHtml;
   };
 
   // Show loading while checking authentication
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
-        <PageLoader text="Authenticating..." />
+        <LoadingTimeout timeout={15000}>
+          <PageLoader text="Authenticating..." />
+        </LoadingTimeout>
       </div>
     );
   }
@@ -235,10 +403,11 @@ export default function AuditPage() {
                   <Button
                     variant="outline"
                     onClick={handleExport}
+                    disabled={dataLoading}
                     className="flex items-center gap-2"
                   >
-                    <Download className="h-4 w-4" />
-                    Export
+                    <Download className={`h-4 w-4 ${dataLoading ? 'animate-pulse' : ''}`} />
+                    {dataLoading ? 'Exporting...' : 'Export to Excel'}
                   </Button>
                   <Button
                     onClick={handleRefresh}

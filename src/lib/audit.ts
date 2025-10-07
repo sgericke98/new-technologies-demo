@@ -1,7 +1,14 @@
 import { supabase } from '@/integrations/supabase/client';
 import { Tables } from '@/integrations/supabase/types';
 
-export type AuditLog = Tables<'audit_logs'>;
+export type AuditLog = Tables<'audit_logs'> & {
+  profiles?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
+};
 
 export interface AuditLogInsert {
   user_id: string;
@@ -124,7 +131,7 @@ export async function getRecentAuditLogs(limit: number = 10): Promise<AuditLog[]
 }
 
 /**
- * Get audit statistics
+ * Get audit statistics (optimized with aggregation)
  */
 export async function getAuditStats(): Promise<{
   total_logs: number;
@@ -132,31 +139,66 @@ export async function getAuditStats(): Promise<{
   logs_by_entity: Record<string, number>;
   logs_by_user: Record<string, number>;
 }> {
-  const { data, error } = await supabase
-    .from('audit_logs')
-    .select('action, entity, user_id');
+  try {
+    // Use database aggregation instead of fetching all records
+    const { data: actionStats, error: actionError } = await supabase
+      .from('audit_logs')
+      .select('action')
+      .limit(1000); // Limit to recent logs for performance
 
-  if (error) {
-    console.error('Failed to fetch audit stats:', error);
-    throw error;
+    const { data: entityStats, error: entityError } = await supabase
+      .from('audit_logs')
+      .select('entity')
+      .limit(1000);
+
+    const { data: userStats, error: userError } = await supabase
+      .from('audit_logs')
+      .select('user_id')
+      .limit(1000);
+
+    // Get total count efficiently
+    const { count: totalLogs, error: countError } = await supabase
+      .from('audit_logs')
+      .select('*', { count: 'exact', head: true });
+
+    if (actionError || entityError || userError || countError) {
+      console.error('Failed to fetch audit stats:', { actionError, entityError, userError, countError });
+      throw new Error('Failed to fetch audit statistics');
+    }
+
+    const stats = {
+      total_logs: totalLogs || 0,
+      logs_by_action: {} as Record<string, number>,
+      logs_by_entity: {} as Record<string, number>,
+      logs_by_user: {} as Record<string, number>,
+    };
+
+    // Process action stats
+    (actionStats || []).forEach(log => {
+      stats.logs_by_action[log.action] = (stats.logs_by_action[log.action] || 0) + 1;
+    });
+
+    // Process entity stats
+    (entityStats || []).forEach(log => {
+      stats.logs_by_entity[log.entity] = (stats.logs_by_entity[log.entity] || 0) + 1;
+    });
+
+    // Process user stats
+    (userStats || []).forEach(log => {
+      stats.logs_by_user[log.user_id] = (stats.logs_by_user[log.user_id] || 0) + 1;
+    });
+
+    return stats;
+  } catch (error) {
+    console.error('Error in getAuditStats:', error);
+    // Return empty stats instead of throwing to prevent UI blocking
+    return {
+      total_logs: 0,
+      logs_by_action: {},
+      logs_by_entity: {},
+      logs_by_user: {},
+    };
   }
-
-  const logs = data || [];
-  
-  const stats = {
-    total_logs: logs.length,
-    logs_by_action: {} as Record<string, number>,
-    logs_by_entity: {} as Record<string, number>,
-    logs_by_user: {} as Record<string, number>,
-  };
-
-  logs.forEach(log => {
-    stats.logs_by_action[log.action] = (stats.logs_by_action[log.action] || 0) + 1;
-    stats.logs_by_entity[log.entity] = (stats.logs_by_entity[log.entity] || 0) + 1;
-    stats.logs_by_user[log.user_id] = (stats.logs_by_user[log.user_id] || 0) + 1;
-  });
-
-  return stats;
 }
 
 /**

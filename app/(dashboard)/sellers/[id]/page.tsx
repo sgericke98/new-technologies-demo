@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,6 +20,24 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useAudit } from "@/hooks/use-audit";
 import { DataLoader } from "@/components/ui/loader";
+
+// Import optimized query service
+import { 
+  getSellerDetailData, 
+  getSellerRevenue, 
+  getAvailableAccountsWithFit,
+  getAvailableAccountsWithFitPaginated,
+  getAssignedAccountsPaginated,
+  getOriginalAccountsPaginated,
+  updateAccountStatus,
+  assignAccountToSeller,
+  unassignAccountFromSeller,
+  getAccountFilterOptions,
+  type SellerDetailData 
+} from "@/lib/seller-detail-queries";
+
+// Import server action for cache invalidation
+import { revalidateSellerData } from "../../../actions/revalidate";
 
 // Import chart components directly for better performance
 import { DivisionChart, StateChart, IndustryChart } from "@/components/charts/RevenueCharts";
@@ -69,94 +88,9 @@ type Seller = {
 };
 
 
-// Calculate distance between two geographic points using Haversine formula
-function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 3959; // Earth's radius in miles
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
-}
-
-// Calculate fit percentage for a single account
-function calculateFitPercentage(account: Account, seller: Seller | null): number {
-  if (!seller) return 0;
-
-  let totalScore = 0;
-  let maxPossibleScore = 0;
-
-  // 1. Division Overlap (40% weight)
-  maxPossibleScore += 40;
-  if (account.current_division === seller.division) {
-    totalScore += 40;
-  }
-
-  // 2. Geographic Proximity (25% weight) - For Midmarket sellers
-  maxPossibleScore += 25;
-  if (seller.size === 'midmarket' && seller.lat && seller.lng && account.lat && account.lng) {
-    const distance = calculateDistance(seller.lat, seller.lng, account.lat, account.lng);
-    // Closer is better - normalize distance (0-1000 miles range)
-    const proximityScore = Math.max(0, 25 - (distance / 40)); // 40 miles = 1 point reduction
-    totalScore += proximityScore;
-  } else if (seller.size === 'midmarket') {
-    // If seller is midmarket but no location data, give partial credit
-    totalScore += 12.5;
-  } else {
-    // For enterprise sellers, give full credit for geographic (they may travel more)
-    totalScore += 25;
-  }
-
-  // 3. Industry Matching (20% weight)
-  maxPossibleScore += 20;
-  if (seller.industry_specialty && account.industry) {
-    const industryMatch = account.industry.toLowerCase().includes(seller.industry_specialty.toLowerCase()) ||
-                         seller.industry_specialty.toLowerCase().includes(account.industry.toLowerCase());
-    if (industryMatch) {
-      totalScore += 20;
-    }
-  } else {
-    // If no industry data, give partial credit
-    totalScore += 10;
-  }
-
-  // 4. Revenue Potential (10% weight) - Normalized
-  maxPossibleScore += 10;
-  const revenueScore = Math.min(10, Math.log10(account.total_revenue + 1) * 2);
-  totalScore += revenueScore;
-
-  // 5. State/Region Matching (5% weight)
-  maxPossibleScore += 5;
-  if (seller.state && account.state && account.state === seller.state) {
-    totalScore += 5;
-  }
-
-  return Math.round((totalScore / maxPossibleScore) * 100);
-}
-
-// Sophisticated sorting algorithm for available accounts
-function sortAvailableAccounts(accounts: Account[], seller: Seller | null): Account[] {
-  if (!seller) return accounts;
-
-  // Calculate fit percentage for each account and add it to the account object
-  const accountsWithFit = accounts.map(account => ({
-    ...account,
-    fitPercentage: calculateFitPercentage(account, seller)
-  }));
-
-  return accountsWithFit.sort((a, b) => {
-    // Primary sort by fit percentage (highest first)
-    if (a.fitPercentage !== b.fitPercentage) {
-      return b.fitPercentage - a.fitPercentage;
-    }
-    
-    // Secondary sort by revenue (highest first) for accounts with same fit
-    return b.total_revenue - a.total_revenue;
-  });
-}
+// Note: Fit calculation is now handled by the database for better performance
+// The database uses a 4-criteria algorithm (Division, Geography, Industry, Size)
+// which is more efficient than the previous 5-criteria frontend approach
 
 export default function SellerDetailPage() {
   const params = useParams();
@@ -189,9 +123,22 @@ export default function SellerDetailPage() {
     country: "all",
     state: "all"
   });
+
+  // Filter options state
+  const [filterOptions, setFilterOptions] = useState({
+    divisions: [] as string[],
+    sizes: [] as string[],
+    tiers: [] as string[],
+    industries: [] as string[],
+    countries: [] as string[],
+    states: [] as string[]
+  });
   
   // Book finalized state
   const [isBookFinalized, setIsBookFinalized] = useState(false);
+  
+  // Tab state
+  const [activeTab, setActiveTab] = useState("pinning");
   
   // Pagination state for performance
   const [accountsPerPage, setAccountsPerPage] = useState(25); // Show 25 accounts per column initially
@@ -233,23 +180,17 @@ export default function SellerDetailPage() {
   const [revenueMaxThreshold, setRevenueMaxThreshold] = useState(50_000_000);
   const [accountThreshold, setAccountThreshold] = useState(5);
 
-  // Memoized functions for performance
-  const calculateFitPercentageMemo = useCallback((account: Account, seller: Seller | null): number => {
-    return calculateFitPercentage(account, seller);
-  }, []);
-
-  const sortAvailableAccountsMemo = useCallback((accounts: Account[], seller: Seller | null): Account[] => {
-    return sortAvailableAccounts(accounts, seller);
-  }, []);
+  // Note: Fit calculation functions removed - now handled by database for better performance
 
   // Memoize expensive calculations - MUST be before any conditional returns
+  // FIXED: Only count states from seller's specific accounts, not all available accounts
   const uniqueStates = useMemo(() => {
     return new Set(
-      [...originalAccounts, ...mustKeepAccounts, ...forDiscussionAccounts, ...toBePeeledAccounts, ...allAvailableAccounts]
+      [...originalAccounts, ...mustKeepAccounts, ...forDiscussionAccounts, ...toBePeeledAccounts]
         .map(a => a.state)
         .filter(state => state !== null && state !== undefined && state !== '')
     );
-  }, [originalAccounts, mustKeepAccounts, forDiscussionAccounts, toBePeeledAccounts, allAvailableAccounts]);
+  }, [originalAccounts, mustKeepAccounts, forDiscussionAccounts, toBePeeledAccounts]);
 
   const uniqueStatuses = useMemo(() => {
     return new Set(
@@ -291,506 +232,59 @@ export default function SellerDetailPage() {
     );
   }, [originalAccounts, mustKeepAccounts, forDiscussionAccounts, toBePeeledAccounts, allAvailableAccounts]);
 
-  // Helper function to check if account matches filters
-  const matchesFilters = useCallback((account: Account) => {
-    // Search filter
-    const matchesSearch = account.name.toLowerCase().includes(accountSearchQuery.toLowerCase()) ||
-                         account.id.toLowerCase().includes(accountSearchQuery.toLowerCase());
+  // Load filter options from database
+  useEffect(() => {
+    const loadFilterOptions = async () => {
+      try {
+        const options = await getAccountFilterOptions();
+        setFilterOptions(options);
+      } catch (error) {
+        console.error('Error loading filter options:', error);
+      }
+    };
+
+    loadFilterOptions();
+  }, []);
+
+  // Centralized cache invalidation function
+  const invalidateAllSellerQueries = useCallback(async () => {
+    // Invalidate React Query cache (client-side)
+    queryClient.invalidateQueries({ queryKey: ["sellerRevenue"] });
+    queryClient.invalidateQueries({ queryKey: ["sellerDetail", id] });
+    queryClient.invalidateQueries({ queryKey: ["originalAccounts", id] });
+    queryClient.invalidateQueries({ queryKey: ["mustKeepAccounts", id] });
+    queryClient.invalidateQueries({ queryKey: ["forDiscussionAccounts", id] });
+    queryClient.invalidateQueries({ queryKey: ["toBePeeledAccounts", id] });
+    queryClient.invalidateQueries({ queryKey: ["availableAccounts", id] });
+    queryClient.invalidateQueries({ queryKey: ["availableAccountsWithFitPaginated", id] });
+    queryClient.invalidateQueries({ queryKey: ["mustKeepPaginated", id] });
+    queryClient.invalidateQueries({ queryKey: ["forDiscussionPaginated", id] });
+    queryClient.invalidateQueries({ queryKey: ["toBePeeledPaginated", id] });
+    queryClient.invalidateQueries({ queryKey: ["originalPaginated", id] });
     
-    if (!matchesSearch) return false;
+    // Invalidate dashboard queries since they show seller data
+    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
+    queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
+    queryClient.invalidateQueries({ queryKey: ["sellers"] });
     
-    // Division filter
-    if (filters.division !== "all" && account.current_division !== filters.division) return false;
-    
-    // Size filter
-    if (filters.size !== "all" && account.size !== filters.size) return false;
-    
-    // Tier filter
-    if (filters.tier !== "all" && account.tier !== filters.tier) return false;
-    
-    // Industry filter
-    if (filters.industry !== "all" && account.industry !== filters.industry) return false;
-    
-    // Country filter
-    if (filters.country !== "all" && account.country !== filters.country) return false;
-    
-    // State filter
-    if (filters.state !== "all" && account.state !== filters.state) return false;
-    
-    
-    return true;
-  }, [accountSearchQuery, filters]);
+    // Invalidate Next.js server-side cache using server action
+    try {
+      await revalidateSellerData(id);
+    } catch (error) {
+      console.error('Error revalidating server cache:', error);
+      // Don't throw - this is not critical for the user action
+    }
+  }, [queryClient, id]);
+
+  // Note: Client-side filtering removed - now handled server-side for better performance
 
   // Memoize filtered accounts to prevent unnecessary re-filtering
-  const filteredOriginalAccounts = useMemo(() => 
-    originalAccounts.filter(matchesFilters), [originalAccounts, matchesFilters]);
+  // Note: Using paginated queries now, so no need for client-side filtering
+
+  // Note: Using server-side pagination now, so no need for client-side pagination logic
   
-  const filteredMustKeepAccounts = useMemo(() =>
-    mustKeepAccounts.filter(matchesFilters), [mustKeepAccounts, matchesFilters]);
-  
-  const filteredForDiscussionAccounts = useMemo(() =>
-    forDiscussionAccounts.filter(matchesFilters), [forDiscussionAccounts, matchesFilters]);
-  
-  const filteredToBePeeledAccounts = useMemo(() =>
-    toBePeeledAccounts.filter(matchesFilters), [toBePeeledAccounts, matchesFilters]);
-  
-  const filteredAvailableAccounts = useMemo(() =>
-    allAvailableAccounts.filter(matchesFilters), [allAvailableAccounts, matchesFilters]);
-
-  // Enhanced pagination that ensures recently moved accounts are visible
-  const paginatedOriginalAccounts = useMemo(() => {
-    const startIndex = (columnPages.original - 1) * accountsPerPage;
-    const endIndex = startIndex + accountsPerPage;
-    const baseAccounts = filteredOriginalAccounts.slice(startIndex, endIndex);
-    const recentlyMovedInThisColumn = filteredOriginalAccounts.filter(account => 
-      recentlyMovedAccounts.has(account.id) && !baseAccounts.some(a => a.id === account.id)
-    );
-    return [...baseAccounts, ...recentlyMovedInThisColumn];
-  }, [filteredOriginalAccounts, accountsPerPage, recentlyMovedAccounts, columnPages.original]);
-  
-  const paginatedMustKeepAccounts = useMemo(() => {
-    const startIndex = (columnPages.must_keep - 1) * accountsPerPage;
-    const endIndex = startIndex + accountsPerPage;
-    const baseAccounts = filteredMustKeepAccounts.slice(startIndex, endIndex);
-    const recentlyMovedInThisColumn = filteredMustKeepAccounts.filter(account => 
-      recentlyMovedAccounts.has(account.id) && !baseAccounts.some(a => a.id === account.id)
-    );
-    return [...baseAccounts, ...recentlyMovedInThisColumn];
-  }, [filteredMustKeepAccounts, accountsPerPage, recentlyMovedAccounts, columnPages.must_keep]);
-  
-  const paginatedForDiscussionAccounts = useMemo(() => {
-    const startIndex = (columnPages.for_discussion - 1) * accountsPerPage;
-    const endIndex = startIndex + accountsPerPage;
-    const baseAccounts = filteredForDiscussionAccounts.slice(startIndex, endIndex);
-    const recentlyMovedInThisColumn = filteredForDiscussionAccounts.filter(account => 
-      recentlyMovedAccounts.has(account.id) && !baseAccounts.some(a => a.id === account.id)
-    );
-    return [...baseAccounts, ...recentlyMovedInThisColumn];
-  }, [filteredForDiscussionAccounts, accountsPerPage, recentlyMovedAccounts, columnPages.for_discussion]);
-  
-  const paginatedToBePeeledAccounts = useMemo(() => {
-    const startIndex = (columnPages.to_be_peeled - 1) * accountsPerPage;
-    const endIndex = startIndex + accountsPerPage;
-    const baseAccounts = filteredToBePeeledAccounts.slice(startIndex, endIndex);
-    const recentlyMovedInThisColumn = filteredToBePeeledAccounts.filter(account => 
-      recentlyMovedAccounts.has(account.id) && !baseAccounts.some(a => a.id === account.id)
-    );
-    return [...baseAccounts, ...recentlyMovedInThisColumn];
-  }, [filteredToBePeeledAccounts, accountsPerPage, recentlyMovedAccounts, columnPages.to_be_peeled]);
-  
-  const paginatedAvailableAccounts = useMemo(() => {
-    const startIndex = (columnPages.available - 1) * accountsPerPage;
-    const endIndex = startIndex + accountsPerPage;
-    const baseAccounts = filteredAvailableAccounts.slice(startIndex, endIndex);
-    const recentlyMovedInThisColumn = filteredAvailableAccounts.filter(account => 
-      recentlyMovedAccounts.has(account.id) && !baseAccounts.some(a => a.id === account.id)
-    );
-    return [...baseAccounts, ...recentlyMovedInThisColumn];
-  }, [filteredAvailableAccounts, accountsPerPage, recentlyMovedAccounts, columnPages.available]);
-
-  // Handle status change via dropdown selection - memoized for performance
-  const handleStatusChange = useCallback(async (accountId: string, newStatus: string) => {
-    // Cast to proper Account status type
-    const status = newStatus as Account['status'];
-    if (!seller || !profile) {
-      console.error('Missing seller or profile data');
-      return;
-    }
-
-    // Find the account in all possible arrays (use filtered arrays to match what's displayed)
-    const account = [...filteredMustKeepAccounts, ...filteredForDiscussionAccounts, ...filteredToBePeeledAccounts, ...filteredAvailableAccounts].find(a => a.id === accountId);
-    if (!account) {
-      console.error('Account not found:', accountId);
-      toast({
-        title: "Error",
-        description: "Account not found",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const isCurrentlyAssignedToThisSeller = [...filteredMustKeepAccounts, ...filteredForDiscussionAccounts, ...filteredToBePeeledAccounts].some(a => a.id === accountId);
-    const isFromAvailablePool = filteredAvailableAccounts.some(a => a.id === accountId);
-
-    // Prevent moving original accounts to available (they are immutable)
-    if (status === "available" && isCurrentlyAssignedToThisSeller) {
-      const currentAccount = [...filteredMustKeepAccounts, ...filteredForDiscussionAccounts, ...filteredToBePeeledAccounts].find(a => a.id === accountId);
-      if (currentAccount && currentAccount.isOriginal) {
-        toast({
-          title: "Cannot unassign account",
-          description: `Account "${account.name}" is an original account and cannot be unassigned.`,
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
-    const isAssigning = status !== "available";
-    const isMovingBetweenColumns = isCurrentlyAssignedToThisSeller && isAssigning;
-
-    try {
-      if (profile?.role === "MASTER") {
-        if (isAssigning) {
-          if (isMovingBetweenColumns) {
-            // Update existing relationship
-            const { error } = await supabase
-              .from("relationship_maps")
-              .update({ 
-                status: status,
-                updated_at: new Date().toISOString()
-              })
-              .eq("account_id", accountId)
-              .eq("seller_id", id);
-
-            if (error) {
-              console.error('Database update error:', error);
-              toast({
-                title: "Error",
-                description: `Failed to update account status: ${error.message}`,
-                variant: "destructive",
-              });
-              return;
-            }
-
-            // Log audit event for status change
-            try {
-              await logUpdate("relationship", accountId, { status: account.status }, { status: status });
-            } catch (auditError) {
-              console.warn('Audit logging failed:', auditError);
-              // Don't fail the main operation for audit issues
-            }
-
-            // Update state arrays - remove from current and add to target
-            const accountWithStatus = { ...account, status: status };
-            
-            // Use functional updates to ensure atomic state changes
-            setMustKeepAccounts(prev => {
-              const filtered = prev.filter(a => a.id !== accountId);
-              return status === 'must_keep' ? [...filtered, accountWithStatus] : filtered;
-            });
-            
-            setForDiscussionAccounts(prev => {
-              const filtered = prev.filter(a => a.id !== accountId);
-              return status === 'for_discussion' ? [...filtered, accountWithStatus] : filtered;
-            });
-            
-            setToBePeeledAccounts(prev => {
-              const filtered = prev.filter(a => a.id !== accountId);
-              return status === 'to_be_peeled' ? [...filtered, accountWithStatus] : filtered;
-            });
-            
-            // Track this account as recently moved to ensure it's visible
-            setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
-            
-            // Clear the recently moved flag after a delay
-            setTimeout(() => {
-              setRecentlyMovedAccounts(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(accountId);
-                return newSet;
-              });
-            }, 3000); // Clear after 3 seconds
-            
-            queryClient.invalidateQueries({ queryKey: ["sellerRevenue"] });
-            
-            toast({
-              title: "Account status updated",
-              description: `${account.name} has been moved to ${status?.replace('_', ' ') || status}`,
-            });
-          } else {
-            // Create new relationship (from available pool)
-            let dbError = null;
-
-            // Check if there's already a relationship for this account and seller
-            const { data: existingRelationship } = await supabase
-              .from("relationship_maps")
-              .select("id")
-              .eq("account_id", accountId)
-              .eq("seller_id", id)
-              .single();
-
-            if (existingRelationship) {
-              // Update existing relationship
-              const { error } = await supabase
-                .from("relationship_maps")
-                .update({
-                  status: status,
-                  updated_at: new Date().toISOString()
-                })
-                .eq("account_id", accountId)
-                .eq("seller_id", id);
-
-              dbError = error;
-            } else {
-              // Create new relationship
-              const { error } = await supabase
-                .from("relationship_maps")
-                .insert({
-                  account_id: accountId,
-                  seller_id: id,
-                  status: status,
-                  updated_at: new Date().toISOString()
-                });
-
-              dbError = error;
-            }
-
-            if (dbError) {
-              console.error('Database operation error:', dbError);
-              toast({
-                title: "Error",
-                description: `Failed to assign account: ${dbError.message}`,
-                variant: "destructive",
-              });
-              return;
-            }
-
-            // Log audit event for assignment
-            try {
-              const auditData = {
-                account_id: accountId,
-                seller_id: id,
-                status: status,
-                last_actor_user_id: profile.id,
-                account_name: account.name,
-                seller_name: seller.name,
-              };
-              await logAssign(accountId, auditData);
-            } catch (auditError) {
-              console.warn('Audit logging failed:', auditError);
-              // Don't fail the main operation for audit issues
-            }
-
-            // Update the appropriate state based on target zone
-            const accountWithStatus = { ...account, status: status };
-            
-            // Remove from available pool first
-            setAvailableAccounts(prev => prev.filter(a => a.id !== accountId));
-            setLoadedAccounts(prev => ({
-              ...prev,
-              available: prev.available.filter(a => a.id !== accountId)
-            }));
-            
-            // Add to target array immediately (no setTimeout needed)
-            if (status === 'must_keep') {
-              setMustKeepAccounts(prev => [...prev.filter(a => a.id !== accountId), accountWithStatus]);
-            } else if (status === 'for_discussion') {
-              setForDiscussionAccounts(prev => [...prev.filter(a => a.id !== accountId), accountWithStatus]);
-            } else if (status === 'to_be_peeled') {
-              setToBePeeledAccounts(prev => [...prev.filter(a => a.id !== accountId), accountWithStatus]);
-            }
-            
-            // Track this account as recently moved to ensure it's visible
-            setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
-            
-            // Clear the recently moved flag after a delay
-            setTimeout(() => {
-              setRecentlyMovedAccounts(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(accountId);
-                return newSet;
-              });
-            }, 3000); // Clear after 3 seconds
-            
-            queryClient.invalidateQueries({ queryKey: ["sellerRevenue"] });
-            
-            toast({
-              title: "Account assigned",
-              description: `${account.name} has been assigned to ${seller.name}`,
-            });
-          }
-        } else {
-          // When moving to available, set status to "available"
-          const { error } = await supabase
-            .from("relationship_maps")
-            .update({ 
-              status: "available",
-              updated_at: new Date().toISOString()
-            })
-            .eq("account_id", accountId)
-            .eq("seller_id", id);
-
-          if (error) {
-            console.error('Database update error:', error);
-            toast({
-              title: "Error",
-              description: `Failed to unassign account: ${error.message}`,
-              variant: "destructive",
-            });
-            return;
-          }
-
-          // Log audit event for status change to available
-          try {
-            await logUpdate("relationship", accountId, { status: account.status }, { status: "available" });
-          } catch (auditError) {
-            console.warn('Audit logging failed:', auditError);
-            // Don't fail the main operation for audit issues
-          }
-
-          // Update state - move account to available with "available" status
-          const accountWithAvailableStatus = { ...account, status: "available" as const };
-          
-          // Remove from current columns first
-          setMustKeepAccounts(prev => prev.filter(a => a.id !== accountId));
-          setForDiscussionAccounts(prev => prev.filter(a => a.id !== accountId));
-          setToBePeeledAccounts(prev => prev.filter(a => a.id !== accountId));
-          
-          // Then add to available pool (avoid duplicates)
-          setAvailableAccounts(prev => {
-            const filtered = prev.filter(a => a.id !== accountId);
-            return [...filtered, accountWithAvailableStatus];
-          });
-          
-          // Also update loaded accounts
-          setLoadedAccounts(prev => ({
-            ...prev,
-            available: [...prev.available.filter(a => a.id !== accountId), accountWithAvailableStatus]
-          }));
-
-          // Track this account as recently moved to ensure it's visible
-          setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
-          
-          // Clear the recently moved flag after a delay
-          setTimeout(() => {
-            setRecentlyMovedAccounts(prev => {
-              const newSet = new Set(prev);
-              newSet.delete(accountId);
-              return newSet;
-            });
-          }, 3000); // Clear after 3 seconds
-
-          queryClient.invalidateQueries({ queryKey: ["sellerRevenue"] });
-
-          toast({
-            title: "Account unassigned",
-            description: `${account.name} has been unassigned from ${seller.name}`,
-          });
-        }
-      } else if (profile?.role === "MANAGER") {
-        // MANAGER users now have immediate assignment capabilities
-        if (isAssigning) {
-          const { error } = await supabase
-            .from("relationship_maps")
-            .update({
-              seller_id: id,
-              status: "assigned",
-              updated_at: new Date().toISOString()
-            })
-            .eq("account_id", accountId);
-
-          if (error) {
-            console.error('Database update error:', error);
-            toast({
-              title: "Error",
-              description: `Failed to assign account: ${error.message}`,
-              variant: "destructive",
-            });
-            return;
-          }
-
-          // Update state - move account to assigned seller
-          const accountWithAssignedStatus = { ...account, status: "assigned" as const };
-          
-          // Remove from current columns first
-          setAvailableAccounts(prev => prev.filter(a => a.id !== accountId));
-          setMustKeepAccounts(prev => prev.filter(a => a.id !== accountId));
-          setForDiscussionAccounts(prev => prev.filter(a => a.id !== accountId));
-          setToBePeeledAccounts(prev => prev.filter(a => a.id !== accountId));
-          
-          // Then add to for discussion (assigned accounts go to for_discussion)
-          setForDiscussionAccounts(prev => {
-            const filtered = prev.filter(a => a.id !== accountId);
-            return [...filtered, accountWithAssignedStatus];
-          });
-
-          // Track this account as recently moved to ensure it's visible
-          setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
-          
-          // Clear the recently moved flag after a delay
-          setTimeout(() => {
-            setRecentlyMovedAccounts(prev => {
-              const newSet = new Set(prev);
-              newSet.delete(accountId);
-              return newSet;
-            });
-          }, 3000); // Clear after 3 seconds
-
-          queryClient.invalidateQueries({ queryKey: ["sellerRevenue"] });
-
-          toast({
-            title: "Account assigned",
-            description: `${account.name} has been assigned to ${seller.name}`,
-          });
-        } else {
-          const { error } = await supabase
-            .from("relationship_maps")
-            .update({
-              status: "available",
-              updated_at: new Date().toISOString()
-            })
-            .eq("account_id", accountId)
-            .eq("seller_id", id);
-
-          if (error) {
-            console.error('Database update error:', error);
-            toast({
-              title: "Error",
-              description: `Failed to unassign account: ${error.message}`,
-              variant: "destructive",
-            });
-            return;
-          }
-
-          // Update state - move account to available with "available" status
-          const accountWithAvailableStatus = { ...account, status: "available" as const };
-          
-          // Remove from current columns first
-          setMustKeepAccounts(prev => prev.filter(a => a.id !== accountId));
-          setForDiscussionAccounts(prev => prev.filter(a => a.id !== accountId));
-          setToBePeeledAccounts(prev => prev.filter(a => a.id !== accountId));
-          
-          // Then add to available pool (avoid duplicates)
-          setAvailableAccounts(prev => {
-            const filtered = prev.filter(a => a.id !== accountId);
-            return [...filtered, accountWithAvailableStatus];
-          });
-          
-          // Also update loaded accounts
-          setLoadedAccounts(prev => ({
-            ...prev,
-            available: [...prev.available.filter(a => a.id !== accountId), accountWithAvailableStatus]
-          }));
-
-          // Track this account as recently moved to ensure it's visible
-          setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
-          
-          // Clear the recently moved flag after a delay
-          setTimeout(() => {
-            setRecentlyMovedAccounts(prev => {
-              const newSet = new Set(prev);
-              newSet.delete(accountId);
-              return newSet;
-            });
-          }, 3000); // Clear after 3 seconds
-
-          queryClient.invalidateQueries({ queryKey: ["sellerRevenue"] });
-
-          toast({
-            title: "Account unassigned",
-            description: `${account.name} has been unassigned from ${seller.name}`,
-          });
-        }
-      }
-    } catch (error: any) {
-      console.error('Unexpected error in handleStatusChange:', error);
-      toast({
-        title: "Unexpected Error",
-        description: `An unexpected error occurred: ${error?.message || 'Unknown error'}`,
-        variant: "destructive",
-      });
-    }
-  }, [seller, profile, id, toast, logUpdate, logAssign, queryClient, filteredMustKeepAccounts, filteredForDiscussionAccounts, filteredToBePeeledAccounts, filteredAvailableAccounts]);
+  // Note: Available accounts now use server-side pagination via availableAccountsWithFitPaginated
 
   // Function to fetch more available accounts from the database
   const fetchMoreAvailableAccounts = useCallback(async (page: number, limit: number = 25) => {
@@ -809,7 +303,6 @@ export default function SellerDetailPage() {
       
       if (assignedAccountIds.length > 500) {
         // For very large exclusion lists, use client-side filtering with server pagination
-        console.log('Using client-side filtering due to large exclusion list');
         
         // Get all accounts with server-side pagination
         const { data: allAccounts, error: allError, count: allCount } = await supabase
@@ -866,7 +359,6 @@ export default function SellerDetailPage() {
           .order('name');
 
         if (error) {
-          console.warn('Server-side exclusion failed, falling back to client-side filtering:', error);
           
           // Fallback: Get all accounts and filter client-side
           const { data: allAccounts, error: allError, count: allCount } = await supabase
@@ -933,18 +425,17 @@ export default function SellerDetailPage() {
         };
       });
 
-      // Sort using the sophisticated ranking algorithm
-      const sortedAccounts = sortAvailableAccountsMemo(accountsWithRevenue, seller);
+      // Note: Sorting now handled by database for better performance
+      const sortedAccounts = accountsWithRevenue;
 
       return {
         accounts: sortedAccounts,
         totalCount: totalCount
       };
     } catch (error) {
-      console.error('Error fetching more available accounts:', error);
       throw error;
     }
-  }, [seller, sortAvailableAccountsMemo]);
+  }, [seller]);
 
   // Handle loading more accounts for a specific column
   const handleLoadMore = useCallback(async (columnId: string) => {
@@ -971,7 +462,6 @@ export default function SellerDetailPage() {
           available: nextPage
         }));
       } catch (error) {
-        console.error('Error loading more available accounts:', error);
         toast({
           title: "Error",
           description: "Failed to load more accounts",
@@ -1012,9 +502,21 @@ export default function SellerDetailPage() {
 
       setIsBookFinalized(finalized);
       
+      // Refresh the materialized view to reflect changes (same as dashboard)
+      try {
+        await supabase.rpc('refresh_performance_views');
+      } catch (refreshError) {
+        // Don't throw error - this is not critical for the user action
+      }
+      
       // Invalidate queries to refresh dashboard data
       queryClient.invalidateQueries({ queryKey: ["sellers"] });
       queryClient.invalidateQueries({ queryKey: ["sellerRevenue"] });
+      queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
+      
+      // Revalidate the dashboard page to show updated data immediately
+      queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
 
       toast({
         title: "Status updated",
@@ -1029,20 +531,14 @@ export default function SellerDetailPage() {
     }
   }, [id, seller, logEvent, queryClient, toast]);
 
-  // Fetch seller total revenue from the centralized view
+  // OPTIMIZED: Use optimized revenue query with better caching
   const { data: revenueData } = useQuery({
     queryKey: ["sellerRevenue", id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("seller_revenue_view")
-        .select("seller_total_revenue")
-        .eq("seller_id", id)
-        .maybeSingle();
-      
-      if (error) throw error;
-      return Number(data?.seller_total_revenue) || 0;
-    },
+    queryFn: () => getSellerRevenue(id!),
     enabled: !!id && authorized,
+    // Revenue changes more frequently - shorter cache
+    staleTime: 30 * 1000,
+    refetchInterval: 10 * 1000,
   });
 
 
@@ -1050,13 +546,21 @@ export default function SellerDetailPage() {
   useEffect(() => {
     const fetchThresholds = async () => {
       try {
+        // TODO: Create threshold_settings table or use alternative approach
+        // For now, use default values to avoid 404 errors
+        setRevenueThreshold(10_000_000);
+        setRevenueMinThreshold(5_000_000);
+        setRevenueMaxThreshold(50_000_000);
+        setAccountThreshold(5);
+        
+        // Commented out until threshold_settings table is created
+        /*
         const { data, error } = await supabase
           .from('threshold_settings')
           .select('revenue_threshold, revenue_min_threshold, revenue_max_threshold, account_threshold')
           .single();
 
         if (error && error.code !== 'PGRST116') {
-          console.error('Error fetching thresholds:', error);
           return;
         }
 
@@ -1066,8 +570,13 @@ export default function SellerDetailPage() {
           setRevenueMaxThreshold(data.revenue_max_threshold || 50_000_000);
           setAccountThreshold(data.account_threshold || 5);
         }
+        */
       } catch (error) {
-        console.error('Error fetching thresholds:', error);
+        // Use default values if there's an error
+        setRevenueThreshold(10_000_000);
+        setRevenueMinThreshold(5_000_000);
+        setRevenueMaxThreshold(50_000_000);
+        setAccountThreshold(5);
       }
     };
 
@@ -1088,61 +597,638 @@ export default function SellerDetailPage() {
       }
 
       if (profile.role === "MANAGER") {
-        const { data: seller } = await supabase
-          .from("sellers")
-          .select("id, manager_id")
-          .eq("id", id)
+        // Check if the seller exists and if the current manager is assigned to this seller
+        const { data: sellerManager } = await supabase
+          .from("seller_managers")
+          .select(`
+            seller_id,
+            managers!inner(user_id)
+          `)
+          .eq("seller_id", id)
+          .eq("managers.user_id", profile.id)
           .maybeSingle();
 
-        if (!seller) {
-          toast({
-            title: "Seller not found",
-            description: "The requested seller does not exist.",
-            variant: "destructive",
-          });
+        if (!sellerManager) {
+          // Check if seller exists at all
+          const { data: sellerExists } = await supabase
+            .from("sellers")
+            .select("id")
+            .eq("id", id)
+            .maybeSingle();
+
+          if (!sellerExists) {
+            toast({
+              title: "Seller not found",
+              description: "The requested seller does not exist.",
+              variant: "destructive",
+            });
+          } else {
+            toast({
+              title: "Access denied",
+              description: "You do not manage this seller.",
+              variant: "destructive",
+            });
+          }
           router.push("/dashboard");
           return;
         }
 
-        const { data: mgr } = await supabase
-          .from("managers")
-          .select("user_id")
-          .eq("id", seller.manager_id ?? "")
-          .maybeSingle();
-
-        if (mgr?.user_id === profile.id) {
-          setAuthorized(true);
-        } else {
-          toast({
-            title: "Access denied",
-            description: "You do not manage this seller.",
-            variant: "destructive",
-          });
-          router.push("/dashboard");
-          return;
-        }
+        setAuthorized(true);
       }
 
       setChecking(false);
     })();
   }, [id, profile, router, toast]);
 
-  // Use React Query for better caching and performance
-  const { data: sellerData, isLoading: sellerLoading } = useQuery({
-    queryKey: ["seller", id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("sellers")
-        .select("id, name, division, city, state, tenure_months, size, industry_specialty, lat, lng, book_finalized")
-        .eq("id", id)
-        .single();
-      
-      if (error) throw error;
-      return data;
-    },
+  // OPTIMIZED: Use single query with optimized caching strategy
+  const { data: sellerDetailData, isLoading: sellerDetailLoading, error: sellerDetailError } = useQuery({
+    queryKey: ["sellerDetail", id],
+    queryFn: () => getSellerDetailData(id!),
+    enabled: !!id && authorized,
+    // Dynamic data - very short cache for immediate updates
+    staleTime: 2 * 1000,
+    // Refetch every 10 seconds
+    refetchInterval: 10 * 1000,
+    // Keep data fresh for 30 seconds
+    gcTime: 30 * 1000,
+  });
+
+  // Pagination state for available accounts
+  const [availableAccountsPage, setAvailableAccountsPage] = useState(1);
+  const [availableAccountsSearch, setAvailableAccountsSearch] = useState('');
+  const [availableAccountsSortBy, setAvailableAccountsSortBy] = useState<'fit_percentage' | 'name' | 'total_revenue'>('fit_percentage');
+  const [availableAccountsSortOrder, setAvailableAccountsSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [availableAccountsLimit, setAvailableAccountsLimit] = useState(25);
+
+  // Pagination state for must keep accounts
+  const [mustKeepPage, setMustKeepPage] = useState(1);
+  const [mustKeepLimit, setMustKeepLimit] = useState(25);
+
+  // Pagination state for for discussion accounts
+  const [forDiscussionPage, setForDiscussionPage] = useState(1);
+  const [forDiscussionLimit, setForDiscussionLimit] = useState(25);
+
+  // Pagination state for to be peeled accounts
+  const [toBePeeledPage, setToBePeeledPage] = useState(1);
+  const [toBePeeledLimit, setToBePeeledLimit] = useState(25);
+
+  // Pagination state for original accounts
+  const [originalPage, setOriginalPage] = useState(1);
+  const [originalLimit, setOriginalLimit] = useState(25);
+
+  // OPTIMIZED: Query for available accounts with fit percentage (paginated)
+  const { data: availableAccountsWithFitPaginated } = useQuery({
+    queryKey: ["availableAccountsWithFitPaginated", id, availableAccountsPage, availableAccountsSearch, availableAccountsSortBy, availableAccountsSortOrder, availableAccountsLimit, filters.division, filters.size, filters.tier, filters.industry, filters.country, filters.state],
+    queryFn: () => getAvailableAccountsWithFitPaginated(
+      id!,
+      availableAccountsPage,
+      availableAccountsLimit,
+      availableAccountsSearch || undefined,
+      availableAccountsSortBy,
+      availableAccountsSortOrder,
+      filters
+    ),
     enabled: !!id && authorized,
   });
 
+
+  // OPTIMIZED: Query for must keep accounts (paginated) - NO FILTERS APPLIED
+  const { data: mustKeepPaginated } = useQuery({
+    queryKey: ["mustKeepPaginated", id, mustKeepPage, mustKeepLimit],
+    queryFn: () => getAssignedAccountsPaginated(id!, 'must_keep', mustKeepPage, mustKeepLimit),
+    enabled: !!id && authorized,
+  });
+
+  // OPTIMIZED: Query for for discussion accounts (paginated) - NO FILTERS APPLIED
+  const { data: forDiscussionPaginated } = useQuery({
+    queryKey: ["forDiscussionPaginated", id, forDiscussionPage, forDiscussionLimit],
+    queryFn: () => getAssignedAccountsPaginated(id!, 'for_discussion', forDiscussionPage, forDiscussionLimit),
+    enabled: !!id && authorized,
+  });
+
+  // OPTIMIZED: Query for to be peeled accounts (paginated) - NO FILTERS APPLIED
+  const { data: toBePeeledPaginated } = useQuery({
+    queryKey: ["toBePeeledPaginated", id, toBePeeledPage, toBePeeledLimit],
+    queryFn: () => getAssignedAccountsPaginated(id!, 'to_be_peeled', toBePeeledPage, toBePeeledLimit),
+    enabled: !!id && authorized,
+  });
+
+  // OPTIMIZED: Query for original accounts (paginated) - NO FILTERS APPLIED
+  const { data: originalPaginated } = useQuery({
+    queryKey: ["originalPaginated", id, originalPage, originalLimit],
+    queryFn: () => getOriginalAccountsPaginated(id!, originalPage, originalLimit),
+    enabled: !!id && authorized,
+  });
+
+  // Handle status change via dropdown selection - memoized for performance
+  const handleStatusChange = useCallback(async (accountId: string, newStatus: string) => {
+    // Cast to proper Account status type
+    const status = newStatus as Account['status'];
+    if (!seller || !profile) {
+      return;
+    }
+
+    // Find the account in all possible arrays (use paginated data)
+    const account = [
+      ...(originalPaginated?.accounts || []),
+      ...(mustKeepPaginated?.accounts || []), 
+      ...(forDiscussionPaginated?.accounts || []), 
+      ...(toBePeeledPaginated?.accounts || []), 
+      ...(availableAccountsWithFitPaginated?.accounts || [])
+    ].find(a => a.id === accountId);
+    if (!account) {
+      toast({
+        title: "Error",
+        description: "Account not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const isCurrentlyAssignedToThisSeller = [
+      ...(mustKeepPaginated?.accounts || []), 
+      ...(forDiscussionPaginated?.accounts || []), 
+      ...(toBePeeledPaginated?.accounts || [])
+    ].some(a => a.id === accountId);
+    const isFromAvailablePool = (availableAccountsWithFitPaginated?.accounts || []).some(a => a.id === accountId);
+
+    // Prevent moving original accounts to available (they are immutable)
+    if (status === "available" && isCurrentlyAssignedToThisSeller) {
+      const currentAccount = [
+        ...(mustKeepPaginated?.accounts || []), 
+        ...(forDiscussionPaginated?.accounts || []), 
+        ...(toBePeeledPaginated?.accounts || [])
+      ].find(a => a.id === accountId);
+      if (currentAccount && currentAccount.isOriginal) {
+        toast({
+          title: "Cannot unassign account",
+          description: `Account "${account.name}" is an original account and cannot be unassigned.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    const isAssigning = status !== "available";
+    const isMovingBetweenColumns = isCurrentlyAssignedToThisSeller && isAssigning;
+
+    try {
+      if (profile?.role === "MASTER") {
+        if (isAssigning) {
+          if (isMovingBetweenColumns) {
+            // Update existing relationship
+            const { error } = await supabase
+              .from("relationship_maps")
+              .update({ 
+                status: status,
+                updated_at: new Date().toISOString()
+              })
+              .eq("account_id", accountId)
+              .eq("seller_id", id);
+
+            if (error) {
+              toast({
+                title: "Error",
+                description: `Failed to update account status: ${error.message}`,
+                variant: "destructive",
+              });
+              return;
+            }
+
+            // Log audit event for status change
+            try {
+              await logUpdate("relationship", accountId, { status: (account as any).status }, { status: status });
+            } catch (auditError) {
+              // Don't fail the main operation for audit issues
+            }
+
+            // Track this account as recently moved to ensure it's visible
+            setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
+            
+            // Clear the recently moved flag after a delay
+            setTimeout(() => {
+              setRecentlyMovedAccounts(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(accountId);
+                return newSet;
+              });
+            }, 3000); // Clear after 3 seconds
+            
+            // Invalidate all seller-related queries
+            await invalidateAllSellerQueries();
+            
+            // Refresh materialized view and revalidate dashboard for must_keep changes
+            if (status === 'must_keep' || (account as any).status === 'must_keep') {
+              try {
+                await supabase.rpc('refresh_performance_views');
+                queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+                queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
+                queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
+              queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
+                queryClient.invalidateQueries({ queryKey: ["forDiscussionPaginated", id] });
+                queryClient.invalidateQueries({ queryKey: ["toBePeeledPaginated", id] });
+                queryClient.invalidateQueries({ queryKey: ["originalPaginated", id] });
+              } catch (refreshError) {
+                // Don't throw error - this is not critical for the user action
+              }
+            }
+            
+            toast({
+              title: "Account status updated",
+              description: `${account.name} has been moved to ${status?.replace('_', ' ') || status}`,
+            });
+          } else {
+            // Create new relationship (from available pool)
+            let dbError = null;
+
+            // Check if there's already a relationship for this account and seller
+            const { data: existingRelationship } = await supabase
+              .from("relationship_maps")
+              .select("id")
+              .eq("account_id", accountId)
+              .eq("seller_id", id)
+              .single();
+
+            if (existingRelationship) {
+              // Update existing relationship
+              const { error } = await supabase
+                .from("relationship_maps")
+                .update({
+                  status: status,
+                  updated_at: new Date().toISOString()
+                })
+                .eq("account_id", accountId)
+                .eq("seller_id", id);
+
+              dbError = error;
+            } else {
+              // Create new relationship
+              const { error } = await supabase
+                .from("relationship_maps")
+                .insert({
+                  account_id: accountId,
+                  seller_id: id,
+                  status: status,
+                  updated_at: new Date().toISOString()
+                });
+
+              dbError = error;
+            }
+
+            if (dbError) {
+              toast({
+                title: "Error",
+                description: `Failed to assign account: ${dbError.message}`,
+                variant: "destructive",
+              });
+              return;
+            }
+
+            // Log audit event for assignment
+            try {
+              const auditData = {
+                account_id: accountId,
+                seller_id: id,
+                status: status,
+                last_actor_user_id: profile.id,
+                account_name: account.name,
+                seller_name: seller.name,
+              };
+              await logAssign(accountId, auditData);
+            } catch (auditError) {
+              // Don't fail the main operation for audit issues
+            }
+
+            // Track this account as recently moved to ensure it's visible
+            setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
+            
+            // Clear the recently moved flag after a delay
+            setTimeout(() => {
+              setRecentlyMovedAccounts(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(accountId);
+                return newSet;
+              });
+            }, 3000); // Clear after 3 seconds
+            
+            // Invalidate all seller-related queries
+            await invalidateAllSellerQueries();
+            
+            // Refresh materialized view and revalidate dashboard for must_keep assignments
+            if (status === 'must_keep') {
+              try {
+                await supabase.rpc('refresh_performance_views');
+                queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+                queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
+                queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
+              queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
+                queryClient.invalidateQueries({ queryKey: ["forDiscussionPaginated", id] });
+                queryClient.invalidateQueries({ queryKey: ["toBePeeledPaginated", id] });
+                queryClient.invalidateQueries({ queryKey: ["originalPaginated", id] });
+              } catch (refreshError) {
+                // Don't throw error - this is not critical for the user action
+              }
+            }
+            
+            toast({
+              title: "Account assigned",
+              description: `${account.name} has been assigned to ${seller.name}`,
+            });
+          }
+        } else {
+          // When moving to available, set status to "available"
+          const { error } = await supabase
+            .from("relationship_maps")
+            .update({ 
+              status: "available",
+              updated_at: new Date().toISOString()
+            })
+            .eq("account_id", accountId)
+            .eq("seller_id", id);
+
+          if (error) {
+            toast({
+              title: "Error",
+              description: `Failed to unassign account: ${error.message}`,
+              variant: "destructive",
+            });
+            return;
+          }
+
+          // Log audit event for status change to available
+          try {
+            await logUpdate("relationship", accountId, { status: (account as any).status }, { status: "available" });
+          } catch (auditError) {
+            // Don't fail the main operation for audit issues
+          }
+
+          // Track this account as recently moved to ensure it's visible
+          setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
+          
+          // Clear the recently moved flag after a delay
+          setTimeout(() => {
+            setRecentlyMovedAccounts(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(accountId);
+              return newSet;
+            });
+          }, 3000); // Clear after 3 seconds
+
+          // Invalidate all seller-related queries
+          await invalidateAllSellerQueries();
+          
+          // Refresh materialized view and revalidate dashboard if account was in must_keep
+          if ((account as any).status === 'must_keep') {
+            try {
+              await supabase.rpc('refresh_performance_views');
+              queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+              queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
+              queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
+              queryClient.invalidateQueries({ queryKey: ["sellerDetail", id] });
+            } catch (refreshError) {
+              // Don't throw error - this is not critical for the user action
+            }
+          }
+
+          queryClient.invalidateQueries({ queryKey: ["availableAccountsWithFitPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["mustKeepPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["forDiscussionPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["toBePeeledPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["originalPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["sellerDetail", id] });
+
+          toast({
+            title: "Account unassigned",
+            description: `${account.name} has been unassigned from ${seller.name}`,
+          });
+        }
+      } else if (profile?.role === "MANAGER") {
+        // MANAGER users use the same optimized functions as MASTER users
+        if (isAssigning) {
+          if (isMovingBetweenColumns) {
+            // Update existing relationship
+            const { error } = await supabase
+              .from("relationship_maps")
+              .update({ 
+                status: status,
+                updated_at: new Date().toISOString()
+              })
+              .eq("account_id", accountId)
+              .eq("seller_id", id);
+
+            if (error) {
+              toast({
+                title: "Error",
+                description: `Failed to update account status: ${error.message}`,
+                variant: "destructive",
+              });
+              return;
+            }
+
+            // Log audit event for status change
+            try {
+              await logUpdate("relationship", accountId, { status: (account as any).status }, { status: status });
+            } catch (auditError) {
+              // Don't fail the main operation for audit issues
+            }
+
+            // Track this account as recently moved to ensure it's visible
+            setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
+            
+            // Clear the recently moved flag after a delay
+            setTimeout(() => {
+              setRecentlyMovedAccounts(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(accountId);
+                return newSet;
+              });
+            }, 3000); // Clear after 3 seconds
+
+            // Invalidate all seller-related queries
+            await invalidateAllSellerQueries();
+
+            toast({
+              title: "Account status updated",
+              description: `${account.name} status changed to ${status}`,
+            });
+          } else {
+            // Create new relationship
+            const { error } = await supabase
+              .from("relationship_maps")
+              .insert({
+                account_id: accountId,
+                seller_id: id,
+                status: status,
+                updated_at: new Date().toISOString()
+              });
+
+            if (error) {
+              toast({
+                title: "Error",
+                description: `Failed to assign account: ${error.message}`,
+                variant: "destructive",
+              });
+              return;
+            }
+
+            // Log audit event for assignment
+            try {
+              const auditData = {
+                status: status,
+                account_name: account.name,
+                seller_name: seller.name,
+              };
+              await logAssign(accountId, auditData);
+            } catch (auditError) {
+              // Don't fail the main operation for audit issues
+            }
+
+            // Track this account as recently moved to ensure it's visible
+            setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
+            
+            // Clear the recently moved flag after a delay
+            setTimeout(() => {
+              setRecentlyMovedAccounts(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(accountId);
+                return newSet;
+              });
+            }, 3000); // Clear after 3 seconds
+
+            // Invalidate all seller-related queries
+            await invalidateAllSellerQueries();
+
+            toast({
+              title: "Account assigned",
+              description: `${account.name} has been assigned to ${seller.name}`,
+            });
+          }
+        } else {
+          // Unassign account
+          const { error } = await supabase
+            .from("relationship_maps")
+            .delete()
+            .eq("account_id", accountId)
+            .eq("seller_id", id);
+
+          if (error) {
+            toast({
+              title: "Error",
+              description: `Failed to unassign account: ${error.message}`,
+              variant: "destructive",
+            });
+            return;
+          }
+
+          // Track this account as recently moved to ensure it's visible
+          setRecentlyMovedAccounts(prev => new Set([...Array.from(prev), accountId]));
+          
+          // Clear the recently moved flag after a delay
+          setTimeout(() => {
+            setRecentlyMovedAccounts(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(accountId);
+              return newSet;
+            });
+          }, 3000); // Clear after 3 seconds
+
+          // Invalidate all seller-related queries
+          await invalidateAllSellerQueries();
+          
+          // Refresh materialized view and revalidate dashboard if account was in must_keep
+          if ((account as any).status === 'must_keep') {
+            try {
+              await supabase.rpc('refresh_performance_views');
+              queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+              queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
+              queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
+              queryClient.invalidateQueries({ queryKey: ["sellerDetail", id] });
+            } catch (refreshError) {
+              // Don't throw error - this is not critical for the user action
+            }
+          }
+
+          queryClient.invalidateQueries({ queryKey: ["availableAccountsWithFitPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["mustKeepPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["forDiscussionPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["toBePeeledPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["originalPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["sellerDetail", id] });
+
+          toast({
+            title: "Account unassigned",
+            description: `${account.name} has been unassigned from ${seller.name}`,
+          });
+        }
+      }
+    } catch (error: any) {
+      toast({
+        title: "Unexpected Error",
+        description: `An unexpected error occurred: ${error?.message || 'Unknown error'}`,
+        variant: "destructive",
+      });
+    }
+  }, [seller, profile, id, toast, logUpdate, logAssign, queryClient, originalPaginated, mustKeepPaginated, forDiscussionPaginated, toBePeeledPaginated, availableAccountsWithFitPaginated]);
+
+  // Reset pagination when filters change - ONLY for Available accounts
+  useEffect(() => {
+    setAvailableAccountsPage(1);
+  }, [filters]);
+
+  // OPTIMIZED: Process data when sellerDetailData changes
+  useEffect(() => {
+    if (!sellerDetailData) return;
+
+    const { seller: sellerData, originalAccounts: original, assignedAccounts: assigned, availableAccounts: available, restrictedAccounts: restricted } = sellerDetailData;
+
+    // Set seller data
+    if (sellerData) {
+      setSeller({
+        id: sellerData.id,
+        name: sellerData.name,
+        division: sellerData.division,
+        city: null, // Will be populated from other data if needed
+        state: null, // Will be populated from other data if needed
+        tenure_months: sellerData.tenure_months,
+        size: sellerData.size,
+        industry_specialty: sellerData.industry_specialty,
+        lat: sellerData.lat,
+        lng: sellerData.lng,
+      });
+      setIsBookFinalized(sellerData.book_finalized || false);
+    }
+
+    // Set original accounts
+    setOriginalAccounts(original);
+
+    // Categorize assigned accounts by status
+    const mustKeep = assigned.filter(account => 
+      account.status === 'must_keep' || account.status === 'pinned' || account.status === 'approval_for_pinning'
+    );
+    
+    const forDiscussion = assigned.filter(account => 
+      account.status === 'for_discussion' || account.status === 'assigned' || account.status === 'up_for_debate' || account.status === 'approval_for_assigning'
+    );
+    
+    const toBePeeled = assigned.filter(account => 
+      account.status === 'to_be_peeled' || account.status === 'peeled'
+    );
+
+    setMustKeepAccounts(mustKeep);
+    setForDiscussionAccounts(forDiscussion);
+    setToBePeeledAccounts(toBePeeled);
+
+    // Set available accounts (use paginated data if available)
+    if (availableAccountsWithFitPaginated) {
+      setAllAvailableAccounts(availableAccountsWithFitPaginated.accounts);
+    } else {
+      setAllAvailableAccounts(available);
+    }
+
+    setLoading(false);
+  }, [sellerDetailData, availableAccountsWithFitPaginated]);
+
+  // Legacy query for backward compatibility - DISABLED since we're using optimized data
   const { data: accountData, isLoading: accountsLoading } = useQuery({
     queryKey: ["sellerAccounts", id],
     queryFn: async () => {
@@ -1263,9 +1349,10 @@ export default function SellerDetailPage() {
         allAssignedAccounts: allAssignedAccountsResult.data
       };
     },
-    enabled: !!id && authorized,
+    enabled: false, // DISABLED - using optimized data instead
   });
 
+  // DISABLED - using optimized data instead
   const { data: revenuesData } = useQuery({
     queryKey: ["accountRevenues", accountData?.relationships?.map(r => r.account_id)],
     queryFn: async () => {
@@ -1280,19 +1367,18 @@ export default function SellerDetailPage() {
       if (error) throw error;
       return data;
     },
-    enabled: !!accountData?.relationships,
+    enabled: false, // DISABLED - using optimized data instead
   });
 
+  // DISABLED - using optimized data processing instead
   useEffect(() => {
+    return; // DISABLED - using optimized data processing instead
     if (!authorized) return;
     
     const fetchData = async () => {
       setLoading(true);
       
-      if (sellerData) {
-        setSeller(sellerData);
-        setIsBookFinalized(sellerData.book_finalized || false);
-      }
+      // This is now handled by the optimized data processing useEffect above
 
       if (!accountData || !revenuesData) {
         setLoading(false);
@@ -1302,8 +1388,6 @@ export default function SellerDetailPage() {
       const { originalRelationships, relationships, restrictedAccounts, availableFromAnySeller, allAccounts, allAssignedAccounts } = accountData;
       const revenues = revenuesData;
         
-      console.log(`🔍 Debug: Found ${relationships?.length || 0} relationships`);
-      console.log(`🔍 Debug: Found ${revenues?.length || 0} revenue records`);
 
       // Process original accounts with simple revenue sum
       const originalAccountsWithRevenue = originalRelationships
@@ -1368,14 +1452,12 @@ export default function SellerDetailPage() {
         })
         .filter(Boolean) || [];
 
-      console.log(`🔍 Debug: Processed ${assignedAccountsWithRevenue.length} assigned accounts with revenue`);
       
       // Separate accounts by status (handle both old and new statuses)
       const mustKeepAccounts = assignedAccountsWithRevenue.filter(account => 
         account.status === 'must_keep' || account.status === 'pinned' || account.status === 'approval_for_pinning'
       );
       
-      console.log(`🔍 Debug: Found ${mustKeepAccounts.length} must_keep accounts`);
       const forDiscussionAccounts = assignedAccountsWithRevenue.filter(account => 
         account.status === 'for_discussion' || account.status === 'assigned' || account.status === 'up_for_debate' || account.status === 'approval_for_assigning'
       );
@@ -1441,8 +1523,8 @@ export default function SellerDetailPage() {
       // Combine truly unassigned accounts with available accounts from any seller
       const allAvailableAccounts = [...trulyUnassigned, ...availableFromAnySellerWithRevenue];
 
-      // Sort available accounts using sophisticated ranking algorithm
-      const sortedAvailable = sortAvailableAccountsMemo(allAvailableAccounts, sellerData || null);
+      // Note: Sorting now handled by database for better performance
+      const sortedAvailable = allAvailableAccounts;
       
       // Initialize loaded accounts with the first page of available accounts
       const initialAvailableAccounts = sortedAvailable.slice(0, accountsPerPage);
@@ -1461,7 +1543,7 @@ export default function SellerDetailPage() {
     };
 
     fetchData();
-  }, [authorized, id, sellerData, accountData, revenuesData]);
+  }, [authorized, id, seller, accountData, revenuesData]);
 
 
   if (checking) {
@@ -1668,16 +1750,16 @@ export default function SellerDetailPage() {
                           </span>
                         </div>
                       </div>
-                      <div className="mt-2">
+                      <div className="mt-2 flex items-center space-x-2">
                         <Checkbox
                           id="book-finalized"
                           checked={isBookFinalized}
                           onCheckedChange={(checked) => handleFinalizedChange(checked as boolean)}
-                          className="h-3 w-3"
+                          className="h-4 w-4"
                         />
                         <label 
                           htmlFor="book-finalized"
-                          className="text-xs font-medium leading-none ml-2 cursor-pointer text-slate-600"
+                          className="text-sm font-medium cursor-pointer text-slate-700 hover:text-slate-900 transition-colors"
                         >
                           Mark finalized
                         </label>
@@ -1858,44 +1940,20 @@ export default function SellerDetailPage() {
                     <p className="text-xs text-slate-600">Unassigned</p>
                   </div>
                 </div>
-                <p className="text-3xl font-bold text-slate-900">{totalCounts.available}</p>
+                <p className="text-3xl font-bold text-slate-900">{availableAccountsWithFitPaginated?.totalCount || 0}</p>
               </div>
             </div>
           </CardHeader>
           
-          {/* Professional Search and Filter Controls */}
-          <div className="px-6 pb-8 space-y-6 bg-white">
-            {/* Enhanced Search Input */}
-            <div className="relative mt-8">
-              <div className="absolute left-4 top-1/2 transform -translate-y-1/2">
-                <Search className="h-4 w-4 text-slate-400" />
-              </div>
-              <Input
-                type="text"
-                placeholder="Search accounts by name or ID..."
-                value={accountSearchQuery}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAccountSearchQuery(e.target.value)}
-                className="pl-12 h-12 text-sm border-slate-200 focus:border-blue-400 focus:ring-blue-400 rounded-xl shadow-sm"
-              />
-              {accountSearchQuery && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setAccountSearchQuery("")}
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 h-8 w-8 p-0"
-                >
-                  ×
-                </Button>
-              )}
-            </div>
-
-            {/* Professional Filter Controls */}
+           {/* Professional Filter Controls */}
+           <div className="px-6 pb-8 space-y-6 bg-white">
             <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 border border-slate-200 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
                 <div className="p-1.5 bg-blue-100 rounded-lg">
                   <Target className="h-4 w-4 text-blue-600" />
                 </div>
-                <h3 className="text-sm font-semibold text-slate-900">Filter Accounts</h3>
+                <h3 className="text-sm font-semibold text-slate-900">Filter Available Accounts</h3>
+                <p className="text-xs text-slate-600 mt-1">Filters only apply to the Available accounts column</p>
               </div>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
@@ -1993,7 +2051,7 @@ export default function SellerDetailPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All countries</SelectItem>
-                      {Array.from(uniqueCountries).map(country => (
+                      {filterOptions.countries.map(country => (
                         <SelectItem key={country} value={country || ""}>
                           {country}
                         </SelectItem>
@@ -2036,7 +2094,7 @@ export default function SellerDetailPage() {
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-blue-900">
-                        Showing {filteredOriginalAccounts.length + filteredMustKeepAccounts.length + filteredForDiscussionAccounts.length + filteredToBePeeledAccounts.length + filteredAvailableAccounts.length} account{(filteredOriginalAccounts.length + filteredMustKeepAccounts.length + filteredForDiscussionAccounts.length + filteredToBePeeledAccounts.length + filteredAvailableAccounts.length) !== 1 ? 's' : ''}
+                        Showing {availableAccountsWithFitPaginated?.totalCount || 0} available account{(availableAccountsWithFitPaginated?.totalCount || 0) !== 1 ? 's' : ''}
                       </p>
                       <p className="text-xs text-blue-700">
                         {accountSearchQuery && `Matching "${accountSearchQuery}"`}
@@ -2061,20 +2119,35 @@ export default function SellerDetailPage() {
           </div>
           
           <CardContent className="pt-2">
-            {loading ? (
+            {(loading || sellerDetailLoading) ? (
               <DataLoader text="Loading account data..." />
             ) : (
-              <div className="min-h-[800px] rounded-xl border border-slate-200 shadow-lg bg-white grid grid-cols-4 lg:grid-cols-5 overflow-hidden">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                <TabsList className="grid w-full grid-cols-2 mb-6">
+                  <TabsTrigger value="pinning" className="flex items-center gap-2">
+                    <Target className="h-4 w-4" />
+                    Account Pinning
+                  </TabsTrigger>
+                  <TabsTrigger value="exploration" className="flex items-center gap-2">
+                    <Search className="h-4 w-4" />
+                    Account Exploration
+                  </TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="pinning" className="mt-0">
+                  <div className="min-h-[800px] rounded-xl border border-slate-200 shadow-lg bg-white grid grid-cols-4 lg:grid-cols-5 overflow-hidden">
                 <div className="hidden lg:block border-r border-slate-200 min-w-0 w-full bg-gradient-to-b from-blue-50/30 to-transparent">
                   <AccountColumn
                     id="original"
                     title="Original Accounts"
-                    accounts={paginatedOriginalAccounts}
-                    totalCount={filteredOriginalAccounts.length}
+                    accounts={(originalPaginated?.accounts || []) as Account[]}
+                    totalCount={originalPaginated?.totalCount || 0}
                     emptyMessage="No original accounts"
                     isReadOnly
                     recentlyMovedAccounts={recentlyMovedAccounts}
-                    onLoadMore={handleLoadMore}
+                    paginationData={originalPaginated}
+                    currentPage={originalPage}
+                    onPageChange={setOriginalPage}
                   />
                 </div>
                 
@@ -2082,13 +2155,15 @@ export default function SellerDetailPage() {
                   <AccountColumn
                     id="must_keep"
                     title="Must Keep"
-                    accounts={paginatedMustKeepAccounts}
-                    totalCount={filteredMustKeepAccounts.length}
+                    accounts={(mustKeepPaginated?.accounts || []) as Account[]}
+                    totalCount={mustKeepPaginated?.totalCount || 0}
                     emptyMessage="No accounts marked as must keep"
                     userRole={profile?.role}
                     onStatusChange={handleStatusChange}
                     recentlyMovedAccounts={recentlyMovedAccounts}
-                    onLoadMore={handleLoadMore}
+                    paginationData={mustKeepPaginated}
+                    currentPage={mustKeepPage}
+                    onPageChange={setMustKeepPage}
                   />
                 </div>
                 
@@ -2096,13 +2171,15 @@ export default function SellerDetailPage() {
                   <AccountColumn
                     id="for_discussion"
                     title="For Discussion"
-                    accounts={paginatedForDiscussionAccounts}
-                    totalCount={filteredForDiscussionAccounts.length}
+                    accounts={(forDiscussionPaginated?.accounts || []) as Account[]}
+                    totalCount={forDiscussionPaginated?.totalCount || 0}
                     emptyMessage="No accounts for discussion"
                     userRole={profile?.role}
                     onStatusChange={handleStatusChange}
                     recentlyMovedAccounts={recentlyMovedAccounts}
-                    onLoadMore={handleLoadMore}
+                    paginationData={forDiscussionPaginated}
+                    currentPage={forDiscussionPage}
+                    onPageChange={setForDiscussionPage}
                   />
                 </div>
                 
@@ -2110,30 +2187,69 @@ export default function SellerDetailPage() {
                   <AccountColumn
                     id="to_be_peeled"
                     title="To be Peeled"
-                    accounts={paginatedToBePeeledAccounts}
-                    totalCount={filteredToBePeeledAccounts.length}
+                    accounts={(toBePeeledPaginated?.accounts || []) as Account[]}
+                    totalCount={toBePeeledPaginated?.totalCount || 0}
                     emptyMessage="No accounts to be peeled"
                     userRole={profile?.role}
                     onStatusChange={handleStatusChange}
                     recentlyMovedAccounts={recentlyMovedAccounts}
-                    onLoadMore={handleLoadMore}
+                    paginationData={toBePeeledPaginated}
+                    currentPage={toBePeeledPage}
+                    onPageChange={setToBePeeledPage}
                   />
                 </div>
                 
                 <div className="min-w-0 w-full pr-2 bg-gradient-to-b from-slate-50/30 to-transparent">
+
                   <AccountColumn
                     id="available"
                     title="Available Accounts"
-                    accounts={paginatedAvailableAccounts}
-                    totalCount={filteredAvailableAccounts.length}
+                    accounts={availableAccountsWithFitPaginated?.accounts || []}
+                    totalCount={availableAccountsWithFitPaginated?.totalCount || 0}
                     emptyMessage="No available accounts"
                     userRole={profile?.role}
                     onStatusChange={handleStatusChange}
                     recentlyMovedAccounts={recentlyMovedAccounts}
-                    onLoadMore={handleLoadMore}
+                    paginationData={availableAccountsWithFitPaginated}
+                    currentPage={availableAccountsPage}
+                    onPageChange={setAvailableAccountsPage}
+                    searchQuery={availableAccountsSearch}
+                    onSearchChange={(query) => {
+                      setAvailableAccountsSearch(query);
+                      setAvailableAccountsPage(1); // Reset to first page when searching
+                    }}
                   />
+                  
                 </div>
-              </div>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="exploration" className="mt-0">
+                  <div className="min-h-[800px] rounded-xl border border-slate-200 shadow-lg bg-white overflow-hidden">
+                    <div className="w-full bg-gradient-to-b from-slate-50/30 to-transparent">
+                      <AccountColumn
+                        id="available"
+                        title="Available Accounts"
+                        accounts={availableAccountsWithFitPaginated?.accounts || []}
+                        totalCount={availableAccountsWithFitPaginated?.totalCount || 0}
+                        emptyMessage="No available accounts"
+                        userRole={profile?.role}
+                        onStatusChange={handleStatusChange}
+                        recentlyMovedAccounts={recentlyMovedAccounts}
+                        paginationData={availableAccountsWithFitPaginated}
+                        currentPage={availableAccountsPage}
+                        onPageChange={setAvailableAccountsPage}
+                        searchQuery={availableAccountsSearch}
+                        onSearchChange={(query) => {
+                          setAvailableAccountsSearch(query);
+                          setAvailableAccountsPage(1); // Reset to first page when searching
+                        }}
+                        isExplorationMode={true}
+                      />
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
             )}
           </CardContent>
         </Card>
@@ -2152,7 +2268,12 @@ const AccountColumn = memo(function AccountColumn({
   userRole,
   onStatusChange,
   recentlyMovedAccounts,
-  onLoadMore,
+  paginationData,
+  currentPage,
+  onPageChange,
+  searchQuery,
+  onSearchChange,
+  isExplorationMode = false,
 }: { 
   id: string;
   title: string;
@@ -2163,19 +2284,25 @@ const AccountColumn = memo(function AccountColumn({
   userRole?: string;
   onStatusChange?: (accountId: string, newStatus: string) => void;
   recentlyMovedAccounts?: Set<string>;
-  onLoadMore?: (columnId: string) => void;
+  paginationData?: any;
+  currentPage?: number;
+  onPageChange?: (page: number) => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  isExplorationMode?: boolean;
 }) {
   return (
     <div className="h-full flex flex-col transition-all duration-200 w-full overflow-hidden min-w-0">
       <div className={cn(
-        "p-4 border-b transition-all duration-200 shadow-sm h-[80px] flex items-center",
+        "border-b transition-all duration-200 shadow-sm",
         id === "original" && "bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200",
         id === "must_keep" && "bg-gradient-to-r from-green-50 to-emerald-50 border-green-200",
         id === "for_discussion" && "bg-gradient-to-r from-yellow-50 to-amber-50 border-yellow-200",
         id === "to_be_peeled" && "bg-gradient-to-r from-red-50 to-rose-50 border-red-200",
         id === "available" && "bg-gradient-to-r from-slate-50 to-slate-100 border-slate-200"
       )}>
-        <div className="flex items-center gap-3 w-full">
+        {/* Header with title and count */}
+        <div className="p-4 flex items-center gap-3 w-full">
           <div className={cn(
             "w-3 h-3 rounded-full flex-shrink-0 shadow-sm",
             id === "original" && "bg-blue-500",
@@ -2187,16 +2314,47 @@ const AccountColumn = memo(function AccountColumn({
           <div className="flex-1 min-w-0 overflow-hidden">
             <h3 className="font-bold text-sm text-slate-900 line-clamp-2" title={title}>{title}</h3>
             <p className="text-xs text-slate-600 mt-1">
-              {accounts.length || 0} of {(totalCount ?? accounts.length) || 0} accounts
+              {searchQuery ? `${totalCount || 0} matching accounts` : `${totalCount || 0} accounts`}
             </p>
           </div>
         </div>
+        
+        {/* Search input for Available Accounts */}
+        {id === "available" && onSearchChange && (
+          <div className="px-4 pb-4">
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                <Search className="h-4 w-4 text-slate-400" />
+              </div>
+              <Input
+                type="text"
+                placeholder="Search available accounts..."
+                value={searchQuery || ''}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => onSearchChange(e.target.value)}
+                className="pl-10 h-9 text-sm border-slate-200 focus:border-blue-400 focus:ring-blue-400 rounded-lg shadow-sm"
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onSearchChange('')}
+                  className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
+                >
+                  ×
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       
       <ScrollArea className="flex-1">
-        <div className="p-4 space-y-4 min-h-full transition-all duration-200 w-full max-w-full min-w-0">
+        <div className={cn(
+          "p-4 min-h-full transition-all duration-200 w-full max-w-full min-w-0",
+          isExplorationMode ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" : "space-y-4"
+        )}>
           {accounts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-slate-500">
+            <div className="flex flex-col items-center justify-center py-16 text-slate-500 col-span-full">
               <div className="p-4 bg-slate-100 rounded-full mb-4">
                 <Building2 className="h-8 w-8 opacity-60" />
               </div>
@@ -2213,29 +2371,80 @@ const AccountColumn = memo(function AccountColumn({
                   userRole={userRole}
                   onStatusChange={onStatusChange}
                   isRecentlyMoved={recentlyMovedAccounts?.has(account.id) || false}
+                  isExplorationMode={isExplorationMode}
                 />
               ))}
-              {totalCount && totalCount > accounts.length && (
-                <div className="pt-4 border-t border-slate-200 bg-slate-50/50 rounded-lg p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-slate-600 mb-3 font-medium">
-                      Showing {accounts.length || 0} of {totalCount || 0} accounts
-                    </p>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="text-xs border-slate-300 text-slate-700 hover:bg-slate-100"
-                      onClick={() => onLoadMore?.(id)}
-                    >
-                      Load More ({totalCount - accounts.length} remaining)
-                    </Button>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>
       </ScrollArea>
+      
+          {/* Pagination Controls - for all columns with pagination data */}
+          {paginationData && (
+        <div className="p-3 bg-white border-t border-slate-200">
+          <div className="flex flex-col gap-3">
+            {/* Results info - only show if there are accounts */}
+            {paginationData && paginationData.totalCount > 0 && (
+              <div className="text-sm text-gray-600 text-center">
+                {`Showing ${((currentPage || 1) - 1) * 25 + 1} to ${Math.min((currentPage || 1) * 25, paginationData.totalCount)} of ${paginationData.totalCount} accounts`}
+              </div>
+            )}
+            
+            {/* Pagination buttons - only show if multiple pages */}
+            {paginationData.totalPages > 1 && (
+              <div className="flex items-center justify-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPageChange?.(Math.max(1, (currentPage || 1) - 1))}
+                  disabled={currentPage === 1}
+                  className="px-2 py-1 h-8"
+                >
+                  ←
+                </Button>
+                
+                {/* Page numbers - compact for column width */}
+                {Array.from({ length: Math.min(3, paginationData.totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (paginationData.totalPages <= 3) {
+                    pageNum = i + 1;
+                  } else if ((currentPage || 1) <= 2) {
+                    pageNum = i + 1;
+                  } else if ((currentPage || 1) >= paginationData.totalPages - 1) {
+                    pageNum = paginationData.totalPages - 2 + i;
+                  } else {
+                    pageNum = (currentPage || 1) - 1 + i;
+                  }
+                  
+                  if (pageNum > paginationData.totalPages) return null;
+                  
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={pageNum === currentPage ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => onPageChange?.(pageNum)}
+                      className="w-8 h-8 p-0"
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+                
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPageChange?.(Math.min(paginationData.totalPages, (currentPage || 1) + 1))}
+                  disabled={currentPage === paginationData.totalPages}
+                  className="px-2 py-1 h-8"
+                >
+                  →
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 });
@@ -2247,12 +2456,14 @@ const AccountCard = memo(function AccountCard({
   userRole,
   onStatusChange,
   isRecentlyMoved = false,
+  isExplorationMode = false,
 }: { 
   account: Account; 
   isReadOnly?: boolean;
   userRole?: string;
   onStatusChange?: (accountId: string, newStatus: string) => void;
   isRecentlyMoved?: boolean;
+  isExplorationMode?: boolean;
 }) {
   // Memoize expensive calculations
   const formattedRevenue = useMemo(() => {
@@ -2281,7 +2492,8 @@ const AccountCard = memo(function AccountCard({
   
   return (
     <Card className={cn(
-      "transition-all duration-200 relative border-0 group overflow-hidden bg-white w-full max-w-full h-[375px]",
+      "transition-all duration-200 relative border-0 group overflow-hidden bg-white w-full max-w-full",
+      isExplorationMode ? "h-[280px]" : "h-[375px]",
       !isReadOnly && "hover:shadow-xl hover:shadow-slate-300/40 hover:-translate-y-0.5 hover:scale-[1.002] cursor-pointer",
       isReadOnly && "bg-slate-50/95",
       isRecentlyMoved && "ring-2 ring-blue-400 ring-opacity-60 bg-blue-50/30",
