@@ -38,7 +38,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Set a timeout to redirect to login if no session is established
     const loadingTimeout = setTimeout(() => {
       if (mounted && !isAuthenticated.current) {
-        console.warn('Auth loading timeout - redirecting to login');
         router.push('/auth');
       }
     }, 8000); // 8 second timeout
@@ -48,8 +47,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async (event, session) => {
         if (!mounted) return;
         
-        console.log('Auth state change:', event, session?.user?.id);
-        
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -57,24 +54,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated.current = !!session?.user;
         
         if (session?.user && !profileFetched) {
-          // Fetch profile in background - don't block loading
+          // Fetch profile and wait for it before setting loading to false
           profileFetched = true;
-          console.log('Fetching profile for user:', session.user.id);
           
-          // Don't await - let it fetch in background
+          // Await profile fetch before setting loading to false
           supabase
             .from("profiles")
             .select("*")
             .eq("id", session.user.id)
             .maybeSingle()
             .then(({ data: profileData, error }) => {
+              if (!mounted) return;
+              
               if (error) {
-                console.error('Error fetching profile:', error);
-                // Don't redirect on profile error - just log it
+                // Still set loading to false even on error
               } else {
-                console.log('Profile fetched successfully:', profileData);
                 setProfile(profileData);
               }
+              
+              // Set loading to false AFTER profile is fetched (or failed)
+              setLoading(false);
+              clearTimeout(loadingTimeout);
             });
         } else if (!session?.user) {
           setProfile(null);
@@ -82,12 +82,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // If no session, redirect to login
           router.push('/auth');
           return;
+        } else {
+          // User exists but profile already fetched, set loading to false
+          setLoading(false);
+          clearTimeout(loadingTimeout);
         }
-        
-        // Always set loading to false, even if profile fetch fails
-        console.log('Setting loading to false, user:', !!session?.user, 'profile:', !!profile);
-        setLoading(false);
-        clearTimeout(loadingTimeout);
       }
     );
 
@@ -97,7 +96,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: { session }, error } = await supabase.auth.getSession();
         
         if (error) {
-          console.error('Error getting session:', error);
           router.push('/auth');
           return;
         }
@@ -111,31 +109,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated.current = !!session?.user;
         
         if (session?.user) {
-          // Fetch profile in background - don't block loading
-          console.log('Fetching profile for user (init):', session.user.id);
+          // Fetch profile and wait for it before setting loading to false
           
-          // Don't await - let it fetch in background
-          supabase
+          // Await profile fetch before setting loading to false
+          const { data: profileData, error: profileError } = await supabase
             .from("profiles")
             .select("*")
             .eq("id", session.user.id)
-            .maybeSingle()
-            .then(({ data: profileData, error: profileError }) => {
-              if (profileError) {
-                console.error('Error fetching profile:', profileError);
-                // Don't redirect on profile error - just log it
-              } else {
-                console.log('Profile fetched successfully (init):', profileData);
-                setProfile(profileData);
-              }
-            });
+            .maybeSingle();
+          
+          if (!mounted) return;
+          
+          if (profileError) {
+            // Still set loading to false even on error
+          } else {
+            setProfile(profileData);
+          }
         }
         
-        // Always set loading to false, even if profile fetch fails
+        // Set loading to false AFTER profile is fetched (or failed, or no user)
         setLoading(false);
         clearTimeout(loadingTimeout);
       } catch (error) {
-        console.error('Error initializing auth:', error);
         router.push('/auth');
         return;
       }

@@ -174,7 +174,6 @@ export default function AdminSettingsPage() {
         .order('size_type, seniority_type');
 
       if (revenueRangeError) {
-        console.error('Error fetching revenue range settings:', revenueRangeError);
       } else if (revenueRangeData) {
         const newRevenueRangeSettings: RevenueRangeSettingsState = {
           midmarketJunior: {
@@ -235,7 +234,6 @@ export default function AdminSettingsPage() {
         .order('size_type, seniority_type');
 
       if (accountNumberError) {
-        console.error('Error fetching account number settings:', accountNumberError);
       } else if (accountNumberData) {
         const newAccountNumberSettings: AccountNumberSettingsState = {
           midmarketJunior: {
@@ -284,7 +282,6 @@ export default function AdminSettingsPage() {
         setAccountNumberSettings(newAccountNumberSettings);
       }
     } catch (error) {
-      console.error('Error fetching settings:', error);
     } finally {
       setLoading(false);
     }
@@ -312,8 +309,6 @@ export default function AdminSettingsPage() {
         updated_at: new Date().toISOString(),
       }));
 
-      console.log('Saving revenue range settings:', revenueRangeData);
-
       // Upsert revenue range settings
       const revenueRangeResult = await supabase
         .from('revenue_range_settings')
@@ -323,10 +318,7 @@ export default function AdminSettingsPage() {
         })
         .select();
 
-      console.log('Revenue range settings result:', revenueRangeResult);
-
       if (revenueRangeResult.error) {
-        console.error('Revenue range settings error:', revenueRangeResult.error);
         throw new Error(`Revenue range settings error: ${revenueRangeResult.error.message}`);
       }
 
@@ -339,8 +331,6 @@ export default function AdminSettingsPage() {
         updated_at: new Date().toISOString(),
       }));
 
-      console.log('Saving account number settings:', accountNumberData);
-
       // Upsert account number settings
       const accountNumberResult = await supabase
         .from('account_number_settings')
@@ -350,10 +340,7 @@ export default function AdminSettingsPage() {
         })
         .select();
 
-      console.log('Account number settings result:', accountNumberResult);
-
       if (accountNumberResult.error) {
-        console.error('Account number settings error:', accountNumberResult.error);
         throw new Error(`Account number settings error: ${accountNumberResult.error.message}`);
       }
 
@@ -391,15 +378,13 @@ export default function AdminSettingsPage() {
       // Refresh materialized view to recalculate health indicators with new thresholds
       try {
         await supabase.rpc('refresh_performance_views');
-        console.log('Materialized view refreshed successfully');
         
         // Invalidate dashboard queries to refresh UI with new thresholds
         queryClient.invalidateQueries({ queryKey: ["unified-dashboard"] });
         queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
         queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
-        console.log('Dashboard queries invalidated successfully');
+        queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
       } catch (refreshError) {
-        console.error('Error refreshing materialized view:', refreshError);
         // Don't fail the save operation if refresh fails
       }
 
@@ -408,7 +393,6 @@ export default function AdminSettingsPage() {
         description: 'All settings have been updated successfully. Dashboard will refresh automatically.',
       });
     } catch (error) {
-      console.error('Error saving settings:', error);
       toast({
         title: 'Error',
         description: `Failed to save settings: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -429,22 +413,15 @@ export default function AdminSettingsPage() {
 
   // Handle file selection and show confirmation
   async function handleFileSelection(file: File | null, type: 'comprehensive' | 'sellers' | 'accounts' | 'comprehensive_add') {
-    console.log('🔍 DEBUG: handleFileSelection called', { file: file?.name, type });
-    
     if (!file) {
-      console.log('❌ DEBUG: No file selected');
       return;
     }
     
     // Validate template first
-    console.log('🔍 DEBUG: Starting template validation...');
     addProgressLog(`Validating ${type} template...`);
     const validation = await validateTemplate(file, type);
     
-    console.log('🔍 DEBUG: Validation result', { validation });
-    
     if (!validation.isValid) {
-      console.log('❌ DEBUG: Validation failed, showing validation modal');
       setValidationErrors(validation.errors);
       setValidationWarnings(validation.warnings);
       setShowValidationModal(true);
@@ -453,35 +430,28 @@ export default function AdminSettingsPage() {
     
     // Show warnings if any, but handle ADD mode differently
     if (validation.warnings.length > 0) {
-      console.log('⚠️ DEBUG: Validation warnings found:', validation.warnings);
-      
       // For ADD mode, if the only warning is about Managers sheet having only header row, proceed directly
       if (type === 'comprehensive_add' && validation.warnings.length === 1 && 
           validation.warnings[0].includes('Managers sheet has only header row')) {
-        console.log('✅ DEBUG: ADD mode with expected Managers warning, proceeding directly');
         setSelectedFile(file);
         setImportType(type);
         setShowImportConfirmation(true);
         return;
       }
       
-      console.log('⚠️ DEBUG: Showing validation modal for warnings');
       setValidationWarnings(validation.warnings);
       setValidationErrors([]);
       setShowValidationModal(true);
       return;
     }
     
-    console.log('✅ DEBUG: Validation passed, setting file and type');
     setSelectedFile(file);
     setImportType(type);
     
     // For comprehensive imports, show confirmation dialog
     if (type === 'comprehensive' || type === 'comprehensive_add') {
-      console.log('🔍 DEBUG: Showing import confirmation dialog for type:', type);
       setShowImportConfirmation(true);
     } else {
-      console.log('🔍 DEBUG: Proceeding with individual import');
       // For individual imports, proceed directly
       handleIndividualImport(file, type);
     }
@@ -519,6 +489,7 @@ export default function AdminSettingsPage() {
         queryClient.invalidateQueries({ queryKey: ["unified-dashboard"] });
         queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
         queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
+        queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
         addProgressLog('Dashboard queries invalidated successfully');
       } catch (invalidateError) {
         addProgressLog(`Warning: Error invalidating dashboard queries: ${invalidateError}`);
@@ -548,19 +519,11 @@ export default function AdminSettingsPage() {
 
   // Comprehensive import handler
   async function handleComprehensiveImport() {
-    console.log('🔍 DEBUG: handleComprehensiveImport called', { 
-      selectedFile: selectedFile?.name, 
-      importType, 
-      profileId: profile?.id 
-    });
-    
     if (!selectedFile) {
-      console.log('❌ DEBUG: No selected file, returning');
       return;
     }
     
     try {
-      console.log('🔍 DEBUG: Starting comprehensive import process');
       setComprehensiveImporting(true);
       setImportResults(null);
       setShowImportConfirmation(false);
@@ -571,19 +534,15 @@ export default function AdminSettingsPage() {
       let results;
       
       const modeText = importType === 'comprehensive_add' ? 'Add Mode' : 'Replace Mode';
-      console.log('🔍 DEBUG: Import mode:', modeText);
       updateProgressStep(`Starting ${modeText} import...`, 1, 7);
       addProgressLog(`Importing comprehensive data from ${selectedFile.name} (${modeText})`);
       
       updateProgressStep('Validating template...', 2, 7);
-      console.log('🔍 DEBUG: Validating template again...');
       
       // Validate template again for comprehensive imports
       const validation = await validateTemplate(selectedFile, importType);
-      console.log('🔍 DEBUG: Template validation result:', validation);
       
       if (!validation.isValid) {
-        console.log('❌ DEBUG: Template validation failed');
         setProgressError(`Template validation failed: ${validation.errors.join(', ')}`);
         toast({
           title: "Invalid Template",
@@ -594,17 +553,12 @@ export default function AdminSettingsPage() {
       }
       
       updateProgressStep('Processing Excel file...', 3, 7);
-      console.log('🔍 DEBUG: About to call import function for type:', importType);
       
       if (importType === 'comprehensive_add') {
-        console.log('🔍 DEBUG: Calling importComprehensiveDataAdd...');
         results = await importComprehensiveDataAdd(selectedFile, userId, addProgressLog);
-        console.log('🔍 DEBUG: importComprehensiveDataAdd completed:', results);
       } else {
-        console.log('🔍 DEBUG: Calling importComprehensiveData...');
         updateProgressStep('Deleting existing data...', 4, 7);
         results = await importComprehensiveData(selectedFile, userId, addProgressLog);
-        console.log('🔍 DEBUG: importComprehensiveData completed:', results);
       }
       
       updateProgressStep('Importing new data...', 5, 7);
@@ -620,6 +574,7 @@ export default function AdminSettingsPage() {
         queryClient.invalidateQueries({ queryKey: ["unified-dashboard"] });
         queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
         queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
+        queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
         addProgressLog('Dashboard queries invalidated successfully');
       } catch (invalidateError) {
         addProgressLog(`Warning: Error invalidating dashboard queries: ${invalidateError}`);
@@ -719,6 +674,20 @@ export default function AdminSettingsPage() {
       isComplete: false,
       hasError: false,
     });
+    
+    // Reset all file input refs to allow re-selecting the same file
+    if (comprehensiveInputRef.current) {
+      comprehensiveInputRef.current.value = '';
+    }
+    if (comprehensiveAddInputRef.current) {
+      comprehensiveAddInputRef.current.value = '';
+    }
+    if (sellersInputRef.current) {
+      sellersInputRef.current.value = '';
+    }
+    if (accountsInputRef.current) {
+      accountsInputRef.current.value = '';
+    }
   }
 
   // Export handler
@@ -749,7 +718,6 @@ export default function AdminSettingsPage() {
         });
       }
     } catch (error) {
-      console.error('Error exporting accounts:', error);
       toast({
         title: 'Export Failed',
         description: `Failed to export accounts: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1411,7 +1379,6 @@ export default function AdminSettingsPage() {
                 <Button
                   variant="outline"
                   onClick={() => {
-                    console.log('🔍 DEBUG: Add New Data button clicked');
                     comprehensiveAddInputRef.current?.click();
                   }}
                   disabled={comprehensiveImporting}
@@ -1428,10 +1395,6 @@ export default function AdminSettingsPage() {
                 accept=".xlsx"
                 className="hidden"
                 onChange={(e) => {
-                  console.log('🔍 DEBUG: File input changed for comprehensive_add', { 
-                    file: e.target.files?.[0]?.name,
-                    fileSize: e.target.files?.[0]?.size 
-                  });
                   handleFileSelection(e.target.files?.[0] ?? null, 'comprehensive_add');
                 }}
               />
@@ -1828,11 +1791,6 @@ export default function AdminSettingsPage() {
                   </AlertDialogCancel>
                   <AlertDialogAction 
                     onClick={() => {
-                      console.log('🔍 DEBUG: AlertDialogAction clicked', { 
-                        importType, 
-                        comprehensiveImporting,
-                        selectedFile: selectedFile?.name 
-                      });
                       handleComprehensiveImport();
                     }}
                     disabled={comprehensiveImporting}
@@ -1860,7 +1818,12 @@ export default function AdminSettingsPage() {
             </AlertDialog>
 
       {/* Import Progress Modal */}
-      <AlertDialog open={showProgressModal} onOpenChange={setShowProgressModal}>
+      <AlertDialog open={showProgressModal} onOpenChange={(open) => {
+        setShowProgressModal(open);
+        if (!open) {
+          resetProgress(); // Reset progress when modal is closed by any means
+        }
+      }}>
         <AlertDialogContent className="max-w-4xl max-h-[80vh]">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-3 text-xl">
@@ -1951,21 +1914,17 @@ export default function AdminSettingsPage() {
           </div>
 
           <AlertDialogFooter className="gap-3">
-            {importProgress.isComplete || importProgress.hasError ? (
+            {(importProgress.isComplete || importProgress.hasError) && (
               <AlertDialogAction 
-                onClick={() => setShowProgressModal(false)}
+                onClick={() => {
+                  setShowProgressModal(false);
+                  resetProgress(); // Reset progress state for next import
+                }}
                 className="flex items-center gap-2"
               >
                 <CheckCircle className="h-4 w-4" />
                 Close
               </AlertDialogAction>
-            ) : (
-              <AlertDialogCancel 
-                onClick={() => setShowProgressModal(false)}
-                className="flex items-center gap-2"
-              >
-                Cancel Import
-              </AlertDialogCancel>
             )}
           </AlertDialogFooter>
         </AlertDialogContent>

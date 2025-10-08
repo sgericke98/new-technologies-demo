@@ -219,7 +219,6 @@ export function createFallbackQueries() {
   return {
     // Fallback to original queries if optimized ones fail
     getSellerDetailDataFallback: async (sellerId: string) => {
-      console.warn('Using fallback queries - optimizations not available');
       // Implementation would use original query patterns
       return null;
     }

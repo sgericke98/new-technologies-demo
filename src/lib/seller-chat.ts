@@ -41,7 +41,6 @@ export async function getSellerChatMessages(sellerId: string): Promise<ChatMessa
 
     return messagesWithUserInfo;
   } catch (error) {
-    console.error('Error fetching seller chat messages:', error);
     throw error;
   }
 }
@@ -66,7 +65,6 @@ export async function sendChatMessage(messageData: ChatMessageInsert): Promise<C
     const messageWithUserInfo = await fetchUserInfoForMessage(data);
     return messageWithUserInfo;
   } catch (error) {
-    console.error('Error sending chat message:', error);
     throw error;
   }
 }
@@ -92,7 +90,6 @@ export async function updateChatMessage(
     const messageWithUserInfo = await fetchUserInfoForMessage(data);
     return messageWithUserInfo;
   } catch (error) {
-    console.error('Error updating chat message:', error);
     throw error;
   }
 }
@@ -109,7 +106,6 @@ export async function deleteChatMessage(messageId: string): Promise<void> {
 
     if (error) throw error;
   } catch (error) {
-    console.error('Error deleting chat message:', error);
     throw error;
   }
 }
@@ -174,7 +170,6 @@ async function fetchUserInfoForMessage(message: ChatMessage): Promise<ChatMessag
       user_email: userData?.email || '',
     };
   } catch (error) {
-    console.error('Error fetching user info for message:', error);
     return {
       ...message,
       user_name: 'Unknown User',
@@ -211,7 +206,6 @@ export async function getSellerChatStats(sellerId: string): Promise<{
       lastMessageAt,
     };
   } catch (error) {
-    console.error('Error fetching chat stats:', error);
     throw error;
   }
 }

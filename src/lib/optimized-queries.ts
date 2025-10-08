@@ -27,13 +27,11 @@ export async function getSellersWithPerformance(filters?: {
       });
 
     if (error) {
-      console.error('Error fetching sellers with performance:', error);
       throw error;
     }
 
     return data || [];
   } catch (error) {
-    console.error('Error in getSellersWithPerformance:', error);
     // Fallback to basic query if materialized view fails
     return await getSellersFallback(filters);
   }
@@ -80,13 +78,11 @@ export async function getManagerPerformance() {
       .select('*');
 
     if (error) {
-      console.error('Error fetching manager performance:', error);
       throw error;
     }
 
     return data || [];
   } catch (error) {
-    console.error('Error in getManagerPerformance:', error);
     // Fallback to basic query
     return await getManagerPerformanceFallback();
   }
@@ -123,7 +119,6 @@ export async function getAuditStatsOptimized() {
       .single();
 
     if (error) {
-      console.error('Error fetching audit stats:', error);
       throw error;
     }
 
@@ -145,7 +140,6 @@ export async function getAuditStatsOptimized() {
       logs_by_user: {}, // This would need a separate query if needed
     };
   } catch (error) {
-    console.error('Error in getAuditStatsOptimized:', error);
     // Fallback to basic aggregation
     return await getAuditStatsFallback();
   }
@@ -201,7 +195,6 @@ export async function getRelationshipMapsOptimized() {
     if (error) throw error;
     return data || [];
   } catch (error) {
-    console.error('Error in getRelationshipMapsOptimized:', error);
     return [];
   }
 }
@@ -219,7 +212,6 @@ export async function getAccountsWithRevenueOptimized() {
     if (error) throw error;
     return data || [];
   } catch (error) {
-    console.error('Error in getAccountsWithRevenueOptimized:', error);
     return [];
   }
 }
@@ -236,7 +228,6 @@ export async function getSellerRevenueOptimized() {
     if (error) throw error;
     return data || [];
   } catch (error) {
-    console.error('Error in getSellerRevenueOptimized:', error);
     return [];
   }
 }
@@ -253,13 +244,10 @@ export async function refreshPerformanceViews() {
     const { error } = await supabase.rpc('refresh_performance_views');
     
     if (error) {
-      console.error('Error refreshing performance views:', error);
       throw error;
     }
     
-    console.log('Performance views refreshed successfully');
   } catch (error) {
-    console.error('Error in refreshPerformanceViews:', error);
   }
 }
 
@@ -268,7 +256,6 @@ export async function refreshPerformanceViews() {
  * Note: This function is disabled as the table doesn't exist in the current schema
  */
 export async function getQueryPerformanceStats() {
-  console.warn('query_performance_stats table does not exist in the current schema');
   return [];
 }
 
@@ -277,6 +264,5 @@ export async function getQueryPerformanceStats() {
  * Note: This function is disabled as the RPC doesn't exist in the current schema
  */
 export async function analyzeSlowQueries() {
-  console.warn('analyze_slow_queries RPC function does not exist in the current schema');
   return [];
 }

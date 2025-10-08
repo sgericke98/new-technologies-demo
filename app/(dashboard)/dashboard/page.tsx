@@ -195,6 +195,7 @@ export default function DashboardPage() {
   const [completionFilters, setCompletionFilters] = useState<string[]>(["completed", "not-completed"]);
   const [selectedManagers, setSelectedManagers] = useState<string[]>([]);
   const [managerFilters, setManagerFilters] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<string>("enterprise");
 
   // File input refs moved to Settings page
 
@@ -419,6 +420,21 @@ export default function DashboardPage() {
       setFinalizedSellers(finalizedIds);
     }
   }, [unifiedData]);
+
+  // Restore active tab from localStorage on mount
+  useEffect(() => {
+    const savedTab = localStorage.getItem('dashboardActiveTab');
+    if (savedTab) {
+      setActiveTab(savedTab);
+      // Clear it after restoring to prevent persisting across sessions
+      localStorage.removeItem('dashboardActiveTab');
+    }
+  }, []);
+
+  // Function to handle tab change and save to localStorage
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+  };
 
   // Handle checkbox change for finalized status
   const handleFinalizedChange = async (sellerId: string, finalized: boolean) => {
@@ -663,12 +679,12 @@ export default function DashboardPage() {
                     options={[
                       { 
                         value: "completed", 
-                        label: "Completed", 
+                        label: "Book finalized", 
                         icon: <div className="w-2 h-2 rounded-full bg-green-500"></div>
                       },
                       { 
                         value: "not-completed", 
-                        label: "In Progress", 
+                        label: "Book notfinalized", 
                         icon: <div className="w-2 h-2 rounded-full bg-orange-500"></div>
                       }
                     ]}
@@ -732,7 +748,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* KPI Tabs */}
-        <Tabs defaultValue="enterprise" className="w-full">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
           <TabsList className={`grid w-full ${profile?.role === "MASTER" ? "grid-cols-3" : "grid-cols-2"}`}>
             <TabsTrigger value="enterprise">Enterprise</TabsTrigger>
             <TabsTrigger value="midmarket">Midmarket</TabsTrigger>
@@ -766,7 +782,7 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">
-                    ${displayEnterpriseKPIs.totalRevenue.toLocaleString()}
+                    ${displayEnterpriseKPIs.totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </div>
                 </CardContent>
               </Card>
@@ -813,34 +829,17 @@ export default function DashboardPage() {
                   {filteredSellers
                     .filter(s => s.size === 'enterprise')
                     .map(seller => (
-                      <Card key={seller.id} className="transition-all hover:shadow-lg hover:scale-[1.02]">
-                        <CardHeader>
+                      <Card key={seller.id} className="transition-all hover:shadow-lg hover:scale-[1.02] flex flex-col">
+                        <CardHeader className="flex-grow">
                           <div className="flex items-start justify-between">
                             <CardTitle className="text-base">{seller.name}</CardTitle>
                             <DivisionBadge division={seller.division} />
                           </div>
-                          <div className="flex flex-col gap-1 mb-2">
-                            {/* Red Flag - positioned above seniority badge */}
-                            {seller.hasSizeMismatch && (
-                              <div className="flex items-center gap-1 text-red-600 font-bold text-[10px] bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit">
-                                <span>🚩</span>
-                                <span>
-                                  {seller.size === 'enterprise' 
-                                    ? `Midmarket accounts: ${seller.mismatchedAccountCount} accounts`
-                                    : `Enterprise accounts: ${seller.mismatchedAccountCount} accounts`
-                                  }
-                                </span>
-                              </div>
-                            )}
-                            {/* Yellow Flag - industry mismatch - below red flag */}
-                            {seller.hasIndustryMismatch && (
-                              <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
-                                <span>⚠️</span>
-                                <span>Industry mismatch: {seller.industryMismatchedAccountCount} accounts</span>
-                              </div>
-                            )}
-                            {/* Seniority Badge */}
-                            <div className="flex items-center gap-2">
+                          <CardDescription className="text-xs">
+                            Supervisor: {seller.manager?.name || "No Manager"}
+                          </CardDescription>
+                          {/* Seniority Badge */}
+                          <div className="flex items-center gap-2">
                               <Badge 
                                 variant={seller.seniority_type === 'senior' ? 'default' : 'outline'}
                                 className={`text-xs ${
@@ -853,21 +852,38 @@ export default function DashboardPage() {
                                 {seller.seniority_type === 'senior' ? 'Senior' : 'Junior'}
                               </Badge>
                             </div>
+                          <div className="flex flex-col gap-1 mb-2">
+                            {/* Red Flag - positioned above seniority badge */}
+                            {seller.hasSizeMismatch && seller.mismatchedAccountCount > 0 && (
+                              <div className="flex items-center gap-1 text-red-600 font-bold text-[10px] bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit">
+                                <span>🚩</span>
+                                <span>
+                                  {seller.size === 'enterprise' 
+                                    ? `Has ${seller.mismatchedAccountCount} MM accounts`
+                                    : `Has ${seller.mismatchedAccountCount} ENT accounts`
+                                  }
+                                </span>
+                              </div>
+                            )}
+                            {/* Yellow Flag - industry mismatch - below red flag */}
+                            {seller.hasIndustryMismatch && (
+                              <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
+                                <span>⚠️</span>
+                                <span>{seller.industryMismatchedAccountCount} accounts with industry mismatch</span>
+                              </div>
+                            )}
                           </div>
-                          <CardDescription className="text-xs">
-                            {seller.manager?.name || "No Manager"}
-                          </CardDescription>
                         </CardHeader>
-                        <CardContent className="space-y-3">
+                        <CardContent className="flex flex-col space-y-3">
                           <div className="space-y-1">
                             <div className="flex items-center justify-between">
-                              <p className="text-sm text-muted-foreground">
+                              <p className="text-base font-semibold text-black">
                                 {seller.accountCount || 0} accounts
                               </p>
                               <div className={`w-2 h-2 rounded-full ${seller.isAccountCountHealthy ? 'bg-green-500' : 'bg-red-500'}`} />
                             </div>
                             <div className="flex items-center justify-between">
-                              <p className="text-lg font-semibold text-primary">
+                              <p className="text-base font-semibold text-black">
                                 ${seller.totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                               </p>
                               <div className={`w-2 h-2 rounded-full ${seller.isRevenueHealthy ? 'bg-green-500' : 'bg-red-500'}`} />
@@ -888,7 +904,11 @@ export default function DashboardPage() {
                               Book finalized
                             </label>
                           </div>
-                          <Link href={`/sellers/${seller.id}`} className="block">
+                          <Link 
+                            href={`/sellers/${seller.id}`} 
+                            className="block mt-auto"
+                            onClick={() => localStorage.setItem('dashboardActiveTab', activeTab)}
+                          >
                             <Button variant="outline" size="sm" className="w-full">
                               View Details
                             </Button>
@@ -926,7 +946,7 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">
-                    ${displayMidmarketKPIs.totalRevenue.toLocaleString()}
+                    ${displayMidmarketKPIs.totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </div>
                 </CardContent>
               </Card>
@@ -973,8 +993,8 @@ export default function DashboardPage() {
                   {filteredSellers
                     .filter(s => s.size === 'midmarket')
                     .map(seller => (
-                      <Card key={seller.id} className="transition-all hover:shadow-lg hover:scale-[1.02]">
-                        <CardHeader>
+                      <Card key={seller.id} className="transition-all hover:shadow-lg hover:scale-[1.02] flex flex-col">
+                        <CardHeader className="flex-grow">
                           <div className="flex items-start justify-between">
                             <CardTitle className="text-base">{seller.name}</CardTitle>
                             <DivisionBadge division={seller.division} />
@@ -1018,7 +1038,7 @@ export default function DashboardPage() {
                             {seller.manager?.name || "No Manager"}
                           </CardDescription>
                         </CardHeader>
-                        <CardContent className="space-y-3">
+                        <CardContent className="flex flex-col space-y-3">
                           <div className="space-y-1">
                             <div className="flex items-center justify-between">
                               <p className="text-sm text-muted-foreground">
@@ -1048,7 +1068,11 @@ export default function DashboardPage() {
                               Book finalized
                             </label>
                           </div>
-                          <Link href={`/sellers/${seller.id}`} className="block">
+                          <Link 
+                            href={`/sellers/${seller.id}`} 
+                            className="block mt-auto"
+                            onClick={() => localStorage.setItem('dashboardActiveTab', activeTab)}
+                          >
                             <Button variant="outline" size="sm" className="w-full">
                               View Details
                             </Button>

@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
+import { cn, getCountryDisplayName } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -105,7 +105,7 @@ type Seller = {
 export default function SellerDetailPage() {
   const params = useParams();
   const id = params?.id as string;
-  const { profile } = useAuth();
+  const { profile, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -203,6 +203,21 @@ export default function SellerDetailPage() {
   const [revenueMinThreshold, setRevenueMinThreshold] = useState(5_000_000);
   const [revenueMaxThreshold, setRevenueMaxThreshold] = useState(50_000_000);
   const [accountThreshold, setAccountThreshold] = useState(5);
+  
+  // Size-seniority based settings (same as dashboard)
+  const [revenueRangeSettings, setRevenueRangeSettings] = useState({
+    midmarketJunior: { min_revenue: 1_000_000, max_revenue: 5_000_000 },
+    midmarketSenior: { min_revenue: 2_000_000, max_revenue: 8_000_000 },
+    enterpriseJunior: { min_revenue: 3_000_000, max_revenue: 10_000_000 },
+    enterpriseSenior: { min_revenue: 5_000_000, max_revenue: 20_000_000 },
+  });
+  
+  const [accountNumberSettings, setAccountNumberSettings] = useState({
+    midmarketJunior: { max_accounts: 3 },
+    midmarketSenior: { max_accounts: 5 },
+    enterpriseJunior: { max_accounts: 4 },
+    enterpriseSenior: { max_accounts: 7 },
+  });
 
   // Note: Fit calculation functions removed - now handled by database for better performance
 
@@ -263,7 +278,6 @@ export default function SellerDetailPage() {
         const options = await getAccountFilterOptions();
         setFilterOptions(options);
       } catch (error) {
-        console.error('Error loading filter options:', error);
       }
     };
 
@@ -296,7 +310,6 @@ export default function SellerDetailPage() {
     try {
       await revalidateSellerData(id);
     } catch (error) {
-      console.error('Error revalidating server cache:', error);
       // Don't throw - this is not critical for the user action
     }
   }, [queryClient, id]);
@@ -570,37 +583,63 @@ export default function SellerDetailPage() {
   useEffect(() => {
     const fetchThresholds = async () => {
       try {
-        // TODO: Create threshold_settings table or use alternative approach
-        // For now, use default values to avoid 404 errors
-        setRevenueThreshold(10_000_000);
-        setRevenueMinThreshold(5_000_000);
-        setRevenueMaxThreshold(50_000_000);
-        setAccountThreshold(5);
-        
-        // Commented out until threshold_settings table is created
-        /*
-        const { data, error } = await supabase
-          .from('threshold_settings')
-          .select('revenue_threshold, revenue_min_threshold, revenue_max_threshold, account_threshold')
-          .single();
+        // Fetch revenue range settings (same as dashboard)
+        const { data: revenueRangeData, error: revenueRangeError } = await supabase
+          .from('revenue_range_settings')
+          .select('*')
+          .order('size_type, seniority_type');
 
-        if (error && error.code !== 'PGRST116') {
-          return;
+        if (revenueRangeError) {
+        } else if (revenueRangeData) {
+          const newSettings = {
+            midmarketJunior: { min_revenue: 1_000_000, max_revenue: 5_000_000 },
+            midmarketSenior: { min_revenue: 2_000_000, max_revenue: 8_000_000 },
+            enterpriseJunior: { min_revenue: 3_000_000, max_revenue: 10_000_000 },
+            enterpriseSenior: { min_revenue: 5_000_000, max_revenue: 20_000_000 },
+          };
+
+          // Update with fetched data
+          revenueRangeData.forEach((item) => {
+            const key = `${item.size_type}${item.seniority_type.charAt(0).toUpperCase() + item.seniority_type.slice(1)}` as keyof typeof newSettings;
+            if (newSettings[key]) {
+              newSettings[key] = {
+                min_revenue: item.min_revenue,
+                max_revenue: item.max_revenue,
+              };
+            }
+          });
+
+          setRevenueRangeSettings(newSettings);
         }
 
-        if (data) {
-          setRevenueThreshold(data.revenue_threshold || 10_000_000); // Keep for backward compatibility
-          setRevenueMinThreshold(data.revenue_min_threshold || 5_000_000);
-          setRevenueMaxThreshold(data.revenue_max_threshold || 50_000_000);
-          setAccountThreshold(data.account_threshold || 5);
+        // Fetch account number settings (same as dashboard)
+        const { data: accountNumberData, error: accountNumberError } = await supabase
+          .from('account_number_settings')
+          .select('*')
+          .order('size_type, seniority_type');
+
+        if (accountNumberError) {
+        } else if (accountNumberData) {
+          const newAccountNumberSettings = {
+            midmarketJunior: { max_accounts: 3 },
+            midmarketSenior: { max_accounts: 5 },
+            enterpriseJunior: { max_accounts: 4 },
+            enterpriseSenior: { max_accounts: 7 },
+          };
+
+          // Update with fetched data
+          accountNumberData.forEach((item) => {
+            const key = `${item.size_type}${item.seniority_type.charAt(0).toUpperCase() + item.seniority_type.slice(1)}` as keyof typeof newAccountNumberSettings;
+            if (newAccountNumberSettings[key]) {
+              newAccountNumberSettings[key] = {
+                max_accounts: item.max_accounts,
+              };
+            }
+          });
+
+          setAccountNumberSettings(newAccountNumberSettings);
         }
-        */
       } catch (error) {
-        // Use default values if there's an error
-        setRevenueThreshold(10_000_000);
-        setRevenueMinThreshold(5_000_000);
-        setRevenueMaxThreshold(50_000_000);
-        setAccountThreshold(5);
       }
     };
 
@@ -609,8 +648,17 @@ export default function SellerDetailPage() {
 
   useEffect(() => {
     (async () => {
-      if (!profile || !id) {
+      // Wait for auth to finish loading before checking
+      if (authLoading) {
+        return;
+      }
+      
+      if (!profile) {
         router.push("/dashboard");
+        return;
+      }
+      
+      if (!id) {
         return;
       }
 
@@ -662,7 +710,7 @@ export default function SellerDetailPage() {
 
       setChecking(false);
     })();
-  }, [id, profile, router, toast]);
+  }, [id, profile, router, toast, authLoading]);
 
   // OPTIMIZED: Use single query with optimized caching strategy
   const { data: sellerDetailData, isLoading: sellerDetailLoading, error: sellerDetailError } = useQuery({
@@ -1226,8 +1274,8 @@ export default function SellerDetailPage() {
         id: sellerData.id,
         name: sellerData.name,
         division: sellerData.division,
-        city: null, // Will be populated from other data if needed
-        state: null, // Will be populated from other data if needed
+        city: sellerData.city,
+        state: sellerData.state,
         tenure_months: sellerData.tenure_months,
         size: sellerData.size,
         industry_specialty: sellerData.industry_specialty,
@@ -1586,7 +1634,7 @@ export default function SellerDetailPage() {
   }, [authorized, id, seller, accountData, revenuesData]);
 
 
-  if (checking) {
+  if (checking || authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1603,9 +1651,31 @@ export default function SellerDetailPage() {
   const totalAccounts = mustKeepAccounts.length;
   const statesCount = uniqueStates.size;
   
-  // Calculate indicators using revenue range
-  const isRevenueHealthy = totalRevenue >= revenueMinThreshold && totalRevenue <= revenueMaxThreshold;
-  const isAccountCountHealthy = totalAccounts <= accountThreshold;
+  // Calculate indicators using size-seniority based thresholds (same as dashboard)
+  const getSellerThresholds = () => {
+    if (!seller?.size || !seller?.seniority_type) {
+      // Fallback to default thresholds if seller data is not available
+      return {
+        minRevenue: revenueMinThreshold,
+        maxRevenue: revenueMaxThreshold,
+        maxAccounts: accountThreshold
+      };
+    }
+    
+    const key = `${seller.size}${seller.seniority_type.charAt(0).toUpperCase() + seller.seniority_type.slice(1)}` as keyof typeof revenueRangeSettings;
+    const revenueSettings = revenueRangeSettings[key];
+    const accountSettings = accountNumberSettings[key];
+    
+    return {
+      minRevenue: revenueSettings?.min_revenue || revenueMinThreshold,
+      maxRevenue: revenueSettings?.max_revenue || revenueMaxThreshold,
+      maxAccounts: accountSettings?.max_accounts || accountThreshold
+    };
+  };
+  
+  const thresholds = getSellerThresholds();
+  const isRevenueHealthy = totalRevenue >= thresholds.minRevenue && totalRevenue <= thresholds.maxRevenue;
+  const isAccountCountHealthy = totalAccounts <= thresholds.maxAccounts;
   const location = seller?.city && seller?.state ? `${seller.city}, ${seller.state}` : "N/A";
   const tenure = seller?.tenure_months 
     ? `${Math.floor(seller.tenure_months / 12)}y ${seller.tenure_months % 12}m`
@@ -1653,10 +1723,10 @@ export default function SellerDetailPage() {
           {/* Compact Professional Seller Info Card */}
           {seller && (
             <div className="bg-gradient-to-br from-white via-slate-50 to-slate-100 rounded-2xl p-6 border border-slate-200/60 shadow-lg shadow-slate-200/20 mb-6 backdrop-blur-sm">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                 {/* Seller Details */}
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3 mb-4">
+                <div className="space-y-4 flex flex-col">
+                  <div className="flex items-center gap-3 mb-4 h-12">
                     <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-md shadow-blue-500/25">
                       <Users className="h-5 w-5 text-white" />
                     </div>
@@ -1693,18 +1763,6 @@ export default function SellerDetailPage() {
                       </span>
                     </div>
 
-                    {/* State */}
-                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-purple-200">
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="p-1 bg-purple-100 rounded-md">
-                          <MapPin className="h-3.5 w-3.5 text-purple-600" />
-                        </div>
-                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">State</span>
-                      </div>
-                      <span className="text-sm font-bold text-slate-900">
-                        {seller.state || "N/A"}
-                      </span>
-                    </div>
 
                     {/* Industry Specialty */}
                     {seller.industry_specialty && (
@@ -1720,39 +1778,12 @@ export default function SellerDetailPage() {
                         </span>
                       </div>
                     )}
-
-                    {/* Skill Level */}
-                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-green-200 col-span-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="p-1 bg-green-100 rounded-md">
-                            <Target className="h-3.5 w-3.5 text-green-600" />
-                          </div>
-                          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Experience</span>
-                        </div>
-                        <Badge 
-                          variant="outline" 
-                          className={`px-3 py-1 text-xs font-bold ${
-                            seller.seniority_type === 'senior'
-                              ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border-green-300' 
-                              : 'bg-gradient-to-r from-blue-100 to-blue-200 text-blue-800 border-blue-300'
-                          }`}
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <div className={`w-1.5 h-1.5 rounded-full ${
-                              seller.seniority_type === 'senior' ? 'bg-green-500' : 'bg-blue-500'
-                            }`}></div>
-                            {seller.seniority_type === 'senior' ? 'Senior' : 'Junior'}
-                          </div>
-                        </Badge>
-                      </div>
-                    </div>
                   </div>
                 </div>
 
                 {/* Compact Performance Metrics */}
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3 mb-4">
+                <div className="space-y-4 flex flex-col">
+                  <div className="flex items-center gap-3 mb-4 h-12">
                     <div className="p-2 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg shadow-md shadow-emerald-500/25">
                       <TrendingUp className="h-5 w-5 text-white" />
                     </div>
@@ -2132,7 +2163,7 @@ export default function SellerDetailPage() {
                       <SelectItem value="all">All countries</SelectItem>
                       {filterOptions.countries.map(country => (
                         <SelectItem key={country} value={country || ""}>
-                          {country}
+                          {getCountryDisplayName(country)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -2655,6 +2686,7 @@ const AccountTable = ({
                   <TableHead className="w-[100px]">Division</TableHead>
                   <TableHead className="w-[100px]">Revenue</TableHead>
                   <TableHead className="w-[100px]">Size</TableHead>
+                  <TableHead className="w-[100px]">Type</TableHead>
                   <TableHead className="w-[100px]">Tier</TableHead>
                   <TableHead className="w-[120px]">Location</TableHead>
                   <TableHead className="w-[150px]">Industry</TableHead>
@@ -2716,6 +2748,12 @@ const AccountTable = ({
                       </TableCell>
                       
                       <TableCell>
+                        {account.type && (
+                          <span className="text-sm capitalize">{account.type}</span>
+                        )}
+                      </TableCell>
+                      
+                      <TableCell>
                         {account.tier && (
                           <span className="text-sm">{account.tier}</span>
                         )}
@@ -2727,7 +2765,7 @@ const AccountTable = ({
                             <div>{account.state}</div>
                           )}
                           {!account.state && account.country && (
-                            <div>{account.country}</div>
+                            <div>{getCountryDisplayName(account.country)}</div>
                           )}
                         </div>
                       </TableCell>
@@ -2786,9 +2824,7 @@ const AccountTable = ({
                           <Badge 
                             variant={account.status === 'must_keep' ? 'default' : 'secondary'}
                             className="text-xs"
-                          >
-                            {account.status || 'available'}
-                          </Badge>
+                          >Unavailable</Badge>
                         )}
                       </TableCell>
                     </TableRow>
@@ -3094,7 +3130,7 @@ const AccountCard = memo(function AccountCard({
             {(account.state || account.country) && (
               <div className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md">
                 <span className="text-xs font-semibold text-slate-600 block">Location</span>
-                <span className="text-xs font-bold text-slate-800">{account.state || account.country}</span>
+                <span className="text-xs font-bold text-slate-800">{account.state || getCountryDisplayName(account.country)}</span>
               </div>
             )}
             

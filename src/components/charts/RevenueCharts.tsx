@@ -73,7 +73,7 @@ const DivisionChart = memo(({ assignedAccounts, totalRevenue }: RevenueChartsPro
             cy="50%"
             innerRadius={60}
             outerRadius={120}
-            paddingAngle={5}
+            paddingAngle={0}
             dataKey="value"
           >
             {divisionData.map((entry, index) => (

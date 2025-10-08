@@ -49,6 +49,9 @@ export interface SellerDetailData {
     lat: number | null;
     lng: number | null;
     seniority_type: string | null;
+    state: string | null;
+    city: string | null;
+    country: string | null;
   };
   
   // Account relationships with revenue
@@ -172,7 +175,7 @@ export async function getSellerDetailData(sellerId: string): Promise<SellerDetai
       // 1. Get seller basic information
       supabase
         .from('sellers')
-        .select('id, name, division, size, tenure_months, industry_specialty, book_finalized, lat, lng, seniority_type')
+        .select('id, name, division, size, tenure_months, industry_specialty, book_finalized, lat, lng, seniority_type, state, city, country')
         .eq('id', sellerId)
         .single(),
       
@@ -304,7 +307,6 @@ export async function getSellerDetailData(sellerId: string): Promise<SellerDetai
       totalRevenue,
     };
   } catch (error) {
-    console.error('Error fetching seller detail data:', error);
     throw error;
   }
 }
@@ -501,22 +503,21 @@ export async function getAssignedAccountsPaginated(
     const { count: totalCount, error: countError } = await countQuery;
     if (countError) throw countError;
 
-    // Get paginated data with filters applied
+    // Get ALL data (not paginated yet) to sort by revenue first
     const { data, error } = await dataQuery
-      .order('updated_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .order('updated_at', { ascending: false });
 
     if (error) throw error;
 
-    // Get revenue data for these accounts
+    // Get revenue data for ALL accounts
     const accountIds = data?.map((r: any) => r.account_id) || [];
     const { data: revenues } = await supabase
       .from("account_revenues")
       .select("*")
       .in("account_id", accountIds);
 
-    // Process accounts with revenue data (already filtered at database level)
-    const accountsWithRevenue = (data || []).map((r: any) => {
+    // Process ALL accounts with revenue data
+    const allAccountsWithRevenue = (data || []).map((r: any) => {
       const account = r.accounts;
       if (!account) return null;
 
@@ -549,6 +550,12 @@ export async function getAssignedAccountsPaginated(
       };
     }).filter(Boolean);
 
+    // Sort by total revenue descending BEFORE pagination
+    allAccountsWithRevenue.sort((a: any, b: any) => b.total_revenue - a.total_revenue);
+
+    // NOW apply pagination to the sorted results
+    const accountsWithRevenue = allAccountsWithRevenue.slice(offset, offset + limit);
+
     const totalPages = Math.ceil((totalCount || 0) / limit);
 
     return {
@@ -558,7 +565,6 @@ export async function getAssignedAccountsPaginated(
       currentPage: page,
     };
   } catch (error) {
-    console.error(`Error fetching ${status} accounts (paginated):`, error);
     throw error;
   }
 }
@@ -698,22 +704,21 @@ export async function getOriginalAccountsPaginated(
     const { count: totalCount, error: countError } = await countQuery;
     if (countError) throw countError;
 
-    // Get paginated data with filters applied
+    // Get ALL data (not paginated yet) to sort by revenue first
     const { data, error } = await dataQuery
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .order('created_at', { ascending: false });
 
     if (error) throw error;
 
-    // Get revenue data for these accounts
+    // Get revenue data for ALL accounts
     const accountIds = data?.map((r: any) => r.account_id) || [];
     const { data: revenues } = await supabase
       .from("account_revenues")
       .select("*")
       .in("account_id", accountIds);
 
-    // Process accounts with revenue data (already filtered at database level)
-    const accountsWithRevenue = (data || []).map((r: any) => {
+    // Process ALL accounts with revenue data
+    const allAccountsWithRevenue = (data || []).map((r: any) => {
       const account = r.accounts;
       if (!account) return null;
 
@@ -746,6 +751,12 @@ export async function getOriginalAccountsPaginated(
       };
     }).filter(Boolean);
 
+    // Sort by total revenue descending BEFORE pagination
+    allAccountsWithRevenue.sort((a: any, b: any) => b.total_revenue - a.total_revenue);
+
+    // NOW apply pagination to the sorted results
+    const accountsWithRevenue = allAccountsWithRevenue.slice(offset, offset + limit);
+
     const totalPages = Math.ceil((totalCount || 0) / limit);
 
     return {
@@ -755,7 +766,6 @@ export async function getOriginalAccountsPaginated(
       currentPage: page,
     };
   } catch (error) {
-    console.error('Error fetching original accounts (paginated):', error);
     throw error;
   }
 }
@@ -882,7 +892,6 @@ export async function getAllAccountsWithAssignmentStatus(
       ...paginationInfo,
     };
   } catch (error) {
-    console.error('Error fetching all accounts with assignment status:', error);
     throw error;
   }
 }
@@ -1022,7 +1031,6 @@ export async function getAvailableAccountsWithFit(
       ...paginationInfo,
     };
   } catch (error) {
-    console.error('Error fetching available accounts with fit (paginated):', error);
     throw error;
   }
 }
@@ -1041,7 +1049,6 @@ export async function getSellerRevenue(sellerId: string): Promise<number> {
     if (error) throw error;
     return Number(data?.seller_total_revenue) || 0;
   } catch (error) {
-    console.error('Error fetching seller revenue:', error);
     throw error;
   }
 }
@@ -1067,7 +1074,6 @@ export async function updateAccountStatus(
 
     if (error) throw error;
   } catch (error) {
-    console.error('Error updating account status:', error);
     throw error;
   }
 }
@@ -1101,7 +1107,6 @@ export async function assignAccountToSeller(
 
     if (error) throw error;
   } catch (error) {
-    console.error('Error assigning account to seller:', error);
     throw error;
   }
 }
@@ -1122,7 +1127,6 @@ export async function unassignAccountFromSeller(
 
     if (error) throw error;
   } catch (error) {
-    console.error('Error unassigning account from seller:', error);
     throw error;
   }
 }
@@ -1152,7 +1156,6 @@ export async function getAccountFilterOptions(): Promise<{
       .not('state', 'is', null);
 
     if (error) {
-      console.error('Error fetching all accounts for filter options:', error);
       throw error;
     }
 
@@ -1190,7 +1193,6 @@ export async function getAccountFilterOptions(): Promise<{
       states
     };
   } catch (error) {
-    console.error('Error fetching account filter options:', error);
     throw error;
   }
 }

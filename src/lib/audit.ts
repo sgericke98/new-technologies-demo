@@ -36,11 +36,9 @@ export async function logAuditEvent(auditData: AuditLogInsert): Promise<void> {
       });
 
     if (error) {
-      console.error('Failed to log audit event:', error);
       throw error;
     }
   } catch (error) {
-    console.error('Error logging audit event:', error);
     // Don't throw here to avoid breaking the main operation
   }
 }
@@ -57,7 +55,35 @@ export async function getAuditLogs(options: {
   offset?: number;
   order_by?: 'created_at' | 'action' | 'entity';
   order_direction?: 'asc' | 'desc';
-} = {}): Promise<AuditLog[]> {
+} = {}): Promise<{ data: AuditLog[]; totalCount: number }> {
+  // First, get the total count for pagination
+  let countQuery = supabase
+    .from('audit_logs')
+    .select('*', { count: 'exact', head: true });
+
+  if (options.entity) {
+    countQuery = countQuery.eq('entity', options.entity);
+  }
+
+  if (options.entity_id) {
+    countQuery = countQuery.eq('entity_id', options.entity_id);
+  }
+
+  if (options.user_id) {
+    countQuery = countQuery.eq('user_id', options.user_id);
+  }
+
+  if (options.action) {
+    countQuery = countQuery.eq('action', options.action);
+  }
+
+  const { count: totalCount, error: countError } = await countQuery;
+
+  if (countError) {
+    throw countError;
+  }
+
+  // Then get the actual data
   let query = supabase
     .from('audit_logs')
     .select(`
@@ -103,31 +129,35 @@ export async function getAuditLogs(options: {
   const { data, error } = await query;
 
   if (error) {
-    console.error('Failed to fetch audit logs:', error);
     throw error;
   }
 
-  return data || [];
+  return {
+    data: data || [],
+    totalCount: totalCount || 0
+  };
 }
 
 /**
  * Get audit logs for a specific entity
  */
 export async function getEntityAuditLogs(entity: string, entityId: string): Promise<AuditLog[]> {
-  return getAuditLogs({
+  const result = await getAuditLogs({
     entity,
     entity_id: entityId,
     limit: 50,
   });
+  return result.data;
 }
 
 /**
  * Get recent audit logs for dashboard
  */
 export async function getRecentAuditLogs(limit: number = 10): Promise<AuditLog[]> {
-  return getAuditLogs({
+  const result = await getAuditLogs({
     limit,
   });
+  return result.data;
 }
 
 /**
@@ -162,7 +192,6 @@ export async function getAuditStats(): Promise<{
       .select('*', { count: 'exact', head: true });
 
     if (actionError || entityError || userError || countError) {
-      console.error('Failed to fetch audit stats:', { actionError, entityError, userError, countError });
       throw new Error('Failed to fetch audit statistics');
     }
 
@@ -190,7 +219,6 @@ export async function getAuditStats(): Promise<{
 
     return stats;
   } catch (error) {
-    console.error('Error in getAuditStats:', error);
     // Return empty stats instead of throwing to prevent UI blocking
     return {
       total_logs: 0,

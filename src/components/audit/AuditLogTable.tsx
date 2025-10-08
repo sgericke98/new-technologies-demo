@@ -6,20 +6,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { Label } from '@/components/ui/label';
 import { 
-  Search, 
-  Filter, 
   Eye, 
   Calendar, 
   User, 
-  Activity, 
-  Database,
+  Activity,
   ChevronLeft,
   ChevronRight,
   RefreshCw
@@ -30,7 +25,6 @@ interface AuditLogTableProps {
   logs: AuditLog[];
   loading?: boolean;
   onRefresh?: () => void;
-  onFilter?: (filters: AuditFilters) => void;
   pagination?: {
     page: number;
     totalPages: number;
@@ -38,29 +32,13 @@ interface AuditLogTableProps {
   };
 }
 
-interface AuditFilters {
-  entity?: string;
-  action?: string;
-  user_id?: string;
-  search?: string;
-}
-
 export function AuditLogTable({ 
   logs, 
   loading = false, 
   onRefresh,
-  onFilter,
   pagination 
 }: AuditLogTableProps) {
-  const [filters, setFilters] = useState<AuditFilters>({});
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
-
-  const handleFilterChange = (key: keyof AuditFilters, value: string) => {
-    const newFilters = { ...filters, [key]: value || undefined };
-    setFilters(newFilters);
-    onFilter?.(newFilters);
-  };
 
   const getActionBadgeVariant = (action: string) => {
     switch (action.toLowerCase()) {
@@ -150,7 +128,7 @@ export function AuditLogTable({
 
   return (
     <div className="space-y-6">
-      {/* Filters */}
+      {/* Header */}
       <Card>
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
@@ -161,14 +139,6 @@ export function AuditLogTable({
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowFilters(!showFilters)}
-              >
-                <Filter className="h-4 w-4 mr-2" />
-                Filters
-              </Button>
               {onRefresh && (
                 <Button
                   variant="outline"
@@ -182,85 +152,6 @@ export function AuditLogTable({
             </div>
           </div>
         </CardHeader>
-        
-        {showFilters && (
-          <CardContent className="pt-0">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="entity-filter">Entity</Label>
-                <Select
-                  value={filters.entity || ''}
-                  onValueChange={(value) => handleFilterChange('entity', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All entities" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">All entities</SelectItem>
-                    <SelectItem value="seller">Seller</SelectItem>
-                    <SelectItem value="account">Account</SelectItem>
-                    <SelectItem value="relationship">Relationship</SelectItem>
-                    <SelectItem value="request">Request</SelectItem>
-                    <SelectItem value="settings">Settings</SelectItem>
-                    <SelectItem value="user">User</SelectItem>
-                    <SelectItem value="manager">Manager</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="action-filter">Action</Label>
-                <Select
-                  value={filters.action || ''}
-                  onValueChange={(value) => handleFilterChange('action', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All actions" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">All actions</SelectItem>
-                    <SelectItem value="create">Create</SelectItem>
-                    <SelectItem value="update">Update</SelectItem>
-                    <SelectItem value="delete">Delete</SelectItem>
-                    <SelectItem value="pin">Pin</SelectItem>
-                    <SelectItem value="unpin">Unpin</SelectItem>
-                    <SelectItem value="assign">Assign</SelectItem>
-                    <SelectItem value="unassign">Unassign</SelectItem>
-                    <SelectItem value="approve">Approve</SelectItem>
-                    <SelectItem value="reject">Reject</SelectItem>
-                    <SelectItem value="login">Login</SelectItem>
-                    <SelectItem value="logout">Logout</SelectItem>
-                    <SelectItem value="settings_update">Settings Update</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="search-filter">Search</Label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <Input
-                    id="search-filter"
-                    placeholder="Search logs..."
-                    value={filters.search || ''}
-                    onChange={(e) => handleFilterChange('search', e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="user-filter">User</Label>
-                <Input
-                  id="user-filter"
-                  placeholder="User ID"
-                  value={filters.user_id || ''}
-                  onChange={(e) => handleFilterChange('user_id', e.target.value)}
-                />
-              </div>
-            </div>
-          </CardContent>
-        )}
       </Card>
 
       {/* Audit Logs Table */}

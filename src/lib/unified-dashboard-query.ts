@@ -135,7 +135,6 @@ export async function getUnifiedDashboardData(filters?: {
         .single();
       
       if (managerError || !managerData) {
-        console.error('Manager not found for user_id:', filters.managerUserId);
         return []; // Return empty array if manager not found
       }
       
@@ -152,13 +151,11 @@ export async function getUnifiedDashboardData(filters?: {
     const { data, error } = await query.order('seller_name');
 
     if (error) {
-      console.error('Error fetching unified dashboard data:', error);
       throw error;
     }
 
     return (data as any) || [];
   } catch (error) {
-    console.error('Error in getUnifiedDashboardData:', error);
     // Fallback to individual queries if materialized view fails
     return await getUnifiedDashboardDataFallback(filters);
   }
@@ -173,7 +170,6 @@ async function getUnifiedDashboardDataFallback(filters?: {
   division?: string;
   size?: string;
 }): Promise<UnifiedDashboardData[]> {
-  console.warn('Using fallback queries - materialized view not available');
   
   // This would implement the same logic as the current 6 separate queries
   // but return data in the unified format
@@ -206,13 +202,10 @@ export async function refreshUnifiedDashboardView(): Promise<void> {
     const { error } = await supabase.rpc('refresh_performance_views');
     
     if (error) {
-      console.error('Error refreshing unified dashboard view:', error);
       throw error;
     }
     
-    console.log('Unified dashboard view refreshed successfully');
   } catch (error) {
-    console.error('Error in refreshUnifiedDashboardView:', error);
   }
 }
 
@@ -238,7 +231,6 @@ export async function getDashboardPerformanceStats(): Promise<{
       query_time: 0, // This would be measured in a real implementation
     };
   } catch (error) {
-    console.error('Error getting dashboard performance stats:', error);
     return {
       view_size: 0,
       last_refresh: new Date().toISOString(),
