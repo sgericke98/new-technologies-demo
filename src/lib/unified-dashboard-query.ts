@@ -13,6 +13,7 @@ export interface UnifiedDashboardData {
   division: string;
   size: string;
   tenure_months: number;
+  seniority_type: string;
   industry_specialty: string;
   book_finalized: boolean;
   manager_id: string;

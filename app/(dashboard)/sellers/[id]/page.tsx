@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Loader2, Building2, LockIcon, DollarSign, Map, Calendar, Search, Users, Target, TrendingUp, Shield, Globe, Briefcase } from "lucide-react";
+import { ArrowLeft, Loader2, Building2, LockIcon, DollarSign, Map, MapPin, Calendar, Search, Users, Target, TrendingUp, Shield, Globe, Briefcase, MessageCircle } from "lucide-react";
 import React, { useEffect, useState, memo, useMemo, Suspense, lazy, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -15,11 +15,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useAudit } from "@/hooks/use-audit";
 import { DataLoader } from "@/components/ui/loader";
+import { SellerChat } from "@/components/seller/SellerChat";
 
 // Import optimized query service
 import { 
@@ -27,13 +28,15 @@ import {
   getSellerRevenue, 
   getAvailableAccountsWithFit,
   getAvailableAccountsWithFitPaginated,
+  getAllAccountsWithAssignmentStatus, // NEW: Unified approach
   getAssignedAccountsPaginated,
   getOriginalAccountsPaginated,
   updateAccountStatus,
   assignAccountToSeller,
   unassignAccountFromSeller,
   getAccountFilterOptions,
-  type SellerDetailData 
+  type SellerDetailData,
+  type AccountWithAssignment // NEW: Type for unified accounts
 } from "@/lib/seller-detail-queries";
 
 // Import server action for cache invalidation
@@ -72,6 +75,12 @@ type Account = {
   lat?: number | null;
   lng?: number | null;
   fitPercentage?: number;
+  fit_percentage?: number; // NEW: From unified data structure
+  // NEW: Assignment status fields
+  assignment_status?: 'available' | 'must_keep' | 'for_discussion' | 'to_be_peeled' | 'pinned' | 'assigned' | 'up_for_debate' | 'approval_for_pinning' | 'approval_for_assigning' | 'peeled';
+  assigned_seller_id?: string;
+  assigned_seller_name?: string;
+  is_available?: boolean;
 };
 
 type Seller = {
@@ -85,6 +94,7 @@ type Seller = {
   industry_specialty: string | null;
   lat: number | null;
   lng: number | null;
+  seniority_type: string | null;
 };
 
 
@@ -121,7 +131,8 @@ export default function SellerDetailPage() {
     tier: "all",
     industry: "all",
     country: "all",
-    state: "all"
+    state: "all",
+    assignment_status: "all" // NEW: Filter for assignment status
   });
 
   // Filter options state
@@ -139,6 +150,19 @@ export default function SellerDetailPage() {
   
   // Tab state
   const [activeTab, setActiveTab] = useState("pinning");
+  
+  // Preserve tab state across re-renders by using sessionStorage
+  useEffect(() => {
+    const savedTab = sessionStorage.getItem(`seller-tab-${id}`);
+    if (savedTab && ["pinning", "exploration", "chat"].includes(savedTab)) {
+      setActiveTab(savedTab);
+    }
+  }, [id]);
+
+  // Save tab state when it changes
+  useEffect(() => {
+    sessionStorage.setItem(`seller-tab-${id}`, activeTab);
+  }, [activeTab, id]);
   
   // Pagination state for performance
   const [accountsPerPage, setAccountsPerPage] = useState(25); // Show 25 accounts per column initially
@@ -256,7 +280,7 @@ export default function SellerDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["forDiscussionAccounts", id] });
     queryClient.invalidateQueries({ queryKey: ["toBePeeledAccounts", id] });
     queryClient.invalidateQueries({ queryKey: ["availableAccounts", id] });
-    queryClient.invalidateQueries({ queryKey: ["availableAccountsWithFitPaginated", id] });
+    queryClient.invalidateQueries({ queryKey: ["allAccountsWithAssignmentStatus", id] });
     queryClient.invalidateQueries({ queryKey: ["mustKeepPaginated", id] });
     queryClient.invalidateQueries({ queryKey: ["forDiscussionPaginated", id] });
     queryClient.invalidateQueries({ queryKey: ["toBePeeledPaginated", id] });
@@ -658,7 +682,7 @@ export default function SellerDetailPage() {
   const [availableAccountsSearch, setAvailableAccountsSearch] = useState('');
   const [availableAccountsSortBy, setAvailableAccountsSortBy] = useState<'fit_percentage' | 'name' | 'total_revenue'>('fit_percentage');
   const [availableAccountsSortOrder, setAvailableAccountsSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [availableAccountsLimit, setAvailableAccountsLimit] = useState(25);
+  const [availableAccountsLimit, setAvailableAccountsLimit] = useState(50);
 
   // Pagination state for must keep accounts
   const [mustKeepPage, setMustKeepPage] = useState(1);
@@ -676,7 +700,22 @@ export default function SellerDetailPage() {
   const [originalPage, setOriginalPage] = useState(1);
   const [originalLimit, setOriginalLimit] = useState(25);
 
-  // OPTIMIZED: Query for available accounts with fit percentage (paginated)
+  // NEW UNIFIED APPROACH: Query for ALL accounts with assignment status (paginated)
+  const { data: allAccountsWithAssignmentStatus } = useQuery({
+    queryKey: ["allAccountsWithAssignmentStatus", id, availableAccountsPage, availableAccountsSearch, availableAccountsSortBy, availableAccountsSortOrder, availableAccountsLimit, filters.division, filters.size, filters.tier, filters.industry, filters.country, filters.state, filters.assignment_status],
+    queryFn: () => getAllAccountsWithAssignmentStatus(
+      id!,
+      availableAccountsPage,
+      availableAccountsLimit,
+      availableAccountsSearch || undefined,
+      availableAccountsSortBy,
+      availableAccountsSortOrder,
+      filters
+    ),
+    enabled: !!id && authorized,
+  });
+
+  // Legacy query for backward compatibility (will be removed)
   const { data: availableAccountsWithFitPaginated } = useQuery({
     queryKey: ["availableAccountsWithFitPaginated", id, availableAccountsPage, availableAccountsSearch, availableAccountsSortBy, availableAccountsSortOrder, availableAccountsLimit, filters.division, filters.size, filters.tier, filters.industry, filters.country, filters.state],
     queryFn: () => getAvailableAccountsWithFitPaginated(
@@ -688,7 +727,7 @@ export default function SellerDetailPage() {
       availableAccountsSortOrder,
       filters
     ),
-    enabled: !!id && authorized,
+    enabled: false, // DISABLED - using new unified approach
   });
 
 
@@ -734,7 +773,7 @@ export default function SellerDetailPage() {
       ...(mustKeepPaginated?.accounts || []), 
       ...(forDiscussionPaginated?.accounts || []), 
       ...(toBePeeledPaginated?.accounts || []), 
-      ...(availableAccountsWithFitPaginated?.accounts || [])
+      ...(allAccountsWithAssignmentStatus?.accounts || [])
     ].find(a => a.id === accountId);
     if (!account) {
       toast({
@@ -750,7 +789,7 @@ export default function SellerDetailPage() {
       ...(forDiscussionPaginated?.accounts || []), 
       ...(toBePeeledPaginated?.accounts || [])
     ].some(a => a.id === accountId);
-    const isFromAvailablePool = (availableAccountsWithFitPaginated?.accounts || []).some(a => a.id === accountId);
+    const isFromAvailablePool = (allAccountsWithAssignmentStatus?.accounts || []).some(a => a.id === accountId);
 
     // Prevent moving original accounts to available (they are immutable)
     if (status === "available" && isCurrentlyAssignedToThisSeller) {
@@ -990,7 +1029,7 @@ export default function SellerDetailPage() {
             }
           }
 
-          queryClient.invalidateQueries({ queryKey: ["availableAccountsWithFitPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["allAccountsWithAssignmentStatus", id] });
           queryClient.invalidateQueries({ queryKey: ["mustKeepPaginated", id] });
           queryClient.invalidateQueries({ queryKey: ["forDiscussionPaginated", id] });
           queryClient.invalidateQueries({ queryKey: ["toBePeeledPaginated", id] });
@@ -1148,7 +1187,7 @@ export default function SellerDetailPage() {
             }
           }
 
-          queryClient.invalidateQueries({ queryKey: ["availableAccountsWithFitPaginated", id] });
+          queryClient.invalidateQueries({ queryKey: ["allAccountsWithAssignmentStatus", id] });
           queryClient.invalidateQueries({ queryKey: ["mustKeepPaginated", id] });
           queryClient.invalidateQueries({ queryKey: ["forDiscussionPaginated", id] });
           queryClient.invalidateQueries({ queryKey: ["toBePeeledPaginated", id] });
@@ -1168,7 +1207,7 @@ export default function SellerDetailPage() {
         variant: "destructive",
       });
     }
-  }, [seller, profile, id, toast, logUpdate, logAssign, queryClient, originalPaginated, mustKeepPaginated, forDiscussionPaginated, toBePeeledPaginated, availableAccountsWithFitPaginated]);
+  }, [seller, profile, id, toast, logUpdate, logAssign, queryClient, originalPaginated, mustKeepPaginated, forDiscussionPaginated, toBePeeledPaginated, allAccountsWithAssignmentStatus]);
 
   // Reset pagination when filters change - ONLY for Available accounts
   useEffect(() => {
@@ -1194,6 +1233,7 @@ export default function SellerDetailPage() {
         industry_specialty: sellerData.industry_specialty,
         lat: sellerData.lat,
         lng: sellerData.lng,
+        seniority_type: sellerData.seniority_type,
       });
       setIsBookFinalized(sellerData.book_finalized || false);
     }
@@ -1218,15 +1258,15 @@ export default function SellerDetailPage() {
     setForDiscussionAccounts(forDiscussion);
     setToBePeeledAccounts(toBePeeled);
 
-    // Set available accounts (use paginated data if available)
-    if (availableAccountsWithFitPaginated) {
-      setAllAvailableAccounts(availableAccountsWithFitPaginated.accounts);
+    // Set available accounts (use new unified data)
+    if (allAccountsWithAssignmentStatus) {
+      setAllAvailableAccounts(allAccountsWithAssignmentStatus.accounts);
     } else {
       setAllAvailableAccounts(available);
     }
 
     setLoading(false);
-  }, [sellerDetailData, availableAccountsWithFitPaginated]);
+  }, [sellerDetailData, allAccountsWithAssignmentStatus]);
 
   // Legacy query for backward compatibility - DISABLED since we're using optimized data
   const { data: accountData, isLoading: accountsLoading } = useQuery({
@@ -1598,82 +1638,111 @@ export default function SellerDetailPage() {
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{tenure} tenure</span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${
+                    seller?.seniority_type === 'senior' ? 'bg-green-500' : 'bg-blue-500'
+                  }`}></div>
+                  <span className="font-medium">
+                    {seller?.seniority_type === 'senior' ? 'Senior' : 'Junior'}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Professional Seller Info Card */}
+          {/* Compact Professional Seller Info Card */}
           {seller && (
-            <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 border border-slate-200 shadow-lg mb-8">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-gradient-to-br from-white via-slate-50 to-slate-100 rounded-2xl p-6 border border-slate-200/60 shadow-lg shadow-slate-200/20 mb-6 backdrop-blur-sm">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Seller Details */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-3 mb-4">
-                    <div className="p-2 bg-gradient-to-br from-slate-600 to-slate-700 rounded-lg shadow-sm">
+                    <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-md shadow-blue-500/25">
                       <Users className="h-5 w-5 text-white" />
                     </div>
                     <div>
                       <h3 className="text-lg font-bold text-slate-900">Seller Profile</h3>
-                      <p className="text-xs text-slate-500">Key professional attributes</p>
+                      <p className="text-xs text-slate-600">Professional attributes</p>
                     </div>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-3">
                     {/* Division */}
-                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-blue-200">
                       <div className="flex items-center gap-2 mb-1">
-                        <Building2 className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Division</span>
+                        <div className="p-1 bg-blue-100 rounded-md">
+                          <Building2 className="h-3.5 w-3.5 text-blue-600" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Division</span>
                       </div>
-                      <Badge variant="secondary" className="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 border-blue-200">
+                      <Badge variant="secondary" className="px-2 py-1 text-xs font-bold bg-gradient-to-r from-blue-100 to-blue-200 text-blue-800 border-blue-300">
                         {seller.division}
                       </Badge>
                     </div>
 
                     {/* Size */}
-                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-emerald-200">
                       <div className="flex items-center gap-2 mb-1">
-                        <Users className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Size</span>
+                        <div className="p-1 bg-emerald-100 rounded-md">
+                          <Users className="h-3.5 w-3.5 text-emerald-600" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Size</span>
                       </div>
-                      <span className="text-sm font-semibold text-slate-900 capitalize">
+                      <span className="text-sm font-bold text-slate-900 capitalize">
                         {seller.size}
+                      </span>
+                    </div>
+
+                    {/* State */}
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-purple-200">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="p-1 bg-purple-100 rounded-md">
+                          <MapPin className="h-3.5 w-3.5 text-purple-600" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">State</span>
+                      </div>
+                      <span className="text-sm font-bold text-slate-900">
+                        {seller.state || "N/A"}
                       </span>
                     </div>
 
                     {/* Industry Specialty */}
                     {seller.industry_specialty && (
-                      <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 col-span-2">
+                      <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-amber-200 col-span-2">
                         <div className="flex items-center gap-2 mb-1">
-                          <Building2 className="h-3.5 w-3.5 text-slate-500" />
-                          <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Industry Focus</span>
+                          <div className="p-1 bg-amber-100 rounded-md">
+                            <Building2 className="h-3.5 w-3.5 text-amber-600" />
+                          </div>
+                          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Industry Focus</span>
                         </div>
-                        <span className="text-sm font-semibold text-slate-900 truncate block" title={seller.industry_specialty}>
+                        <span className="text-sm font-bold text-slate-900 truncate block" title={seller.industry_specialty}>
                           {seller.industry_specialty}
                         </span>
                       </div>
                     )}
 
                     {/* Skill Level */}
-                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 col-span-2">
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-green-200 col-span-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Target className="h-3.5 w-3.5 text-slate-500" />
-                          <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Skill Level</span>
+                          <div className="p-1 bg-green-100 rounded-md">
+                            <Target className="h-3.5 w-3.5 text-green-600" />
+                          </div>
+                          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Experience</span>
                         </div>
                         <Badge 
                           variant="outline" 
-                          className={`px-2 py-1 text-xs font-semibold ${
-                            (seller.tenure_months || 0) > 12 
-                              ? 'bg-green-100 text-green-800 border-green-300' 
-                              : 'bg-blue-100 text-blue-800 border-blue-300'
+                          className={`px-3 py-1 text-xs font-bold ${
+                            seller.seniority_type === 'senior'
+                              ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border-green-300' 
+                              : 'bg-gradient-to-r from-blue-100 to-blue-200 text-blue-800 border-blue-300'
                           }`}
                         >
                           <div className="flex items-center gap-1.5">
                             <div className={`w-1.5 h-1.5 rounded-full ${
-                              (seller.tenure_months || 0) > 12 ? 'bg-green-500' : 'bg-blue-500'
+                              seller.seniority_type === 'senior' ? 'bg-green-500' : 'bg-blue-500'
                             }`}></div>
-                            {(seller.tenure_months || 0) > 12 ? 'Senior' : 'Junior'}
+                            {seller.seniority_type === 'senior' ? 'Senior' : 'Junior'}
                           </div>
                         </Badge>
                       </div>
@@ -1681,26 +1750,28 @@ export default function SellerDetailPage() {
                   </div>
                 </div>
 
-                {/* Performance Metrics */}
+                {/* Compact Performance Metrics */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-3 mb-4">
-                    <div className="p-2 bg-gradient-to-br from-slate-600 to-slate-700 rounded-lg shadow-sm">
+                    <div className="p-2 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg shadow-md shadow-emerald-500/25">
                       <TrendingUp className="h-5 w-5 text-white" />
                     </div>
                     <div>
                       <h3 className="text-lg font-bold text-slate-900">Performance</h3>
-                      <p className="text-xs text-slate-500">Revenue & account metrics</p>
+                      <p className="text-xs text-slate-600">Revenue & account metrics</p>
                     </div>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-3">
                     {/* Total Revenue */}
-                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-green-200">
                       <div className="flex items-center gap-2 mb-1">
-                        <DollarSign className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Revenue</span>
+                        <div className="p-1 bg-green-100 rounded-md">
+                          <DollarSign className="h-3.5 w-3.5 text-green-600" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Revenue</span>
                       </div>
-                      <span className={`text-sm font-bold ${
+                      <span className={`text-lg font-bold ${
                         isRevenueHealthy ? 'text-green-700' : 'text-red-700'
                       }`}>
                         {totalRevenue >= 1_000_000 
@@ -1713,12 +1784,14 @@ export default function SellerDetailPage() {
                     </div>
 
                     {/* Total Accounts */}
-                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-blue-200">
                       <div className="flex items-center gap-2 mb-1">
-                        <Building2 className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Accounts</span>
+                        <div className="p-1 bg-blue-100 rounded-md">
+                          <Building2 className="h-3.5 w-3.5 text-blue-600" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Accounts</span>
                       </div>
-                      <span className={`text-sm font-bold ${
+                      <span className={`text-lg font-bold ${
                         isAccountCountHealthy ? 'text-green-700' : 'text-red-700'
                       }`}>
                         {totalAccounts}
@@ -1726,31 +1799,35 @@ export default function SellerDetailPage() {
                     </div>
 
                     {/* Geographic Reach */}
-                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-purple-200">
                       <div className="flex items-center gap-2 mb-1">
-                        <Map className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">States</span>
+                        <div className="p-1 bg-purple-100 rounded-md">
+                          <Map className="h-3.5 w-3.5 text-purple-600" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">States</span>
                       </div>
-                      <span className="text-sm font-bold text-slate-900">{statesCount}</span>
+                      <span className="text-lg font-bold text-slate-900">{statesCount}</span>
                     </div>
 
                     {/* Book Status */}
-                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                      <div className="flex items-center justify-between">
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-amber-200">
+                      <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
-                          <Shield className="h-3.5 w-3.5 text-slate-500" />
-                          <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Status</span>
+                          <div className="p-1 bg-amber-100 rounded-md">
+                            <Shield className="h-3.5 w-3.5 text-amber-600" />
+                          </div>
+                          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Status</span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <div className={`w-1.5 h-1.5 rounded-full ${
                             isBookFinalized ? 'bg-green-500' : 'bg-yellow-500'
                           }`}></div>
-                          <span className="text-xs font-semibold text-slate-900">
+                          <span className="text-xs font-bold text-slate-900">
                             {isBookFinalized ? 'Final' : 'Draft'}
                           </span>
                         </div>
                       </div>
-                      <div className="mt-2 flex items-center space-x-2">
+                      <div className="flex items-center space-x-2">
                         <Checkbox
                           id="book-finalized"
                           checked={isBookFinalized}
@@ -1759,7 +1836,7 @@ export default function SellerDetailPage() {
                         />
                         <label 
                           htmlFor="book-finalized"
-                          className="text-sm font-medium cursor-pointer text-slate-700 hover:text-slate-900 transition-colors"
+                          className="text-xs font-medium cursor-pointer text-slate-700 hover:text-slate-900 transition-colors"
                         >
                           Mark finalized
                         </label>
@@ -1940,7 +2017,7 @@ export default function SellerDetailPage() {
                     <p className="text-xs text-slate-600">Unassigned</p>
                   </div>
                 </div>
-                <p className="text-3xl font-bold text-slate-900">{availableAccountsWithFitPaginated?.totalCount || 0}</p>
+                <p className="text-3xl font-bold text-slate-900">{allAccountsWithAssignmentStatus?.totalCount || 0}</p>
               </div>
             </div>
           </CardHeader>
@@ -1969,11 +2046,11 @@ export default function SellerDetailPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All divisions</SelectItem>
-                      <SelectItem value="ESG">ESG</SelectItem>
-                      <SelectItem value="GDT">GDT</SelectItem>
-                      <SelectItem value="GVC">GVC</SelectItem>
-                      <SelectItem value="MSG_US">MSG_US</SelectItem>
-                      <SelectItem value="MIXED">MIXED</SelectItem>
+                      {filterOptions.divisions.map(division => (
+                        <SelectItem key={division} value={division || ""}>
+                          {division}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1990,9 +2067,11 @@ export default function SellerDetailPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All sizes</SelectItem>
-                      <SelectItem value="enterprise">Enterprise</SelectItem>
-                      <SelectItem value="midmarket">Midmarket</SelectItem>
-                      <SelectItem value="no_data">No Data</SelectItem>
+                      {filterOptions.sizes.map(size => (
+                        <SelectItem key={size} value={size || ""}>
+                          {size}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -2009,7 +2088,7 @@ export default function SellerDetailPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All tiers</SelectItem>
-                      {Array.from(uniqueTiers).map(tier => (
+                      {filterOptions.tiers.map(tier => (
                         <SelectItem key={tier} value={tier || ""}>
                           {tier}
                         </SelectItem>
@@ -2030,7 +2109,7 @@ export default function SellerDetailPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All industries</SelectItem>
-                      {Array.from(uniqueIndustries).map(industry => (
+                      {filterOptions.industries.map(industry => (
                         <SelectItem key={industry} value={industry || ""}>
                           {industry}
                         </SelectItem>
@@ -2072,7 +2151,7 @@ export default function SellerDetailPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All states</SelectItem>
-                      {Array.from(uniqueStates).map(state => (
+                      {filterOptions.states.map(state => (
                         <SelectItem key={state} value={state || ""}>
                           {state}
                         </SelectItem>
@@ -2081,11 +2160,29 @@ export default function SellerDetailPage() {
                   </Select>
                 </div>
 
+                {/* Assignment Status Filter */}
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Assignment Status</label>
+                  <Select
+                    value={filters.assignment_status}
+                    onValueChange={(value) => setFilters(prev => ({ ...prev, assignment_status: value }))}
+                  >
+                    <SelectTrigger className="h-10 border-slate-200 focus:border-blue-400 focus:ring-blue-400 rounded-lg">
+                      <SelectValue placeholder="All accounts" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All accounts</SelectItem>
+                      <SelectItem value="available">Unassigned only</SelectItem>
+                      <SelectItem value="assigned">Assigned only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
               </div>
             </div>
 
             {/* Professional Clear Filters and Results Summary */}
-            {(filters.division !== "all" || filters.size !== "all" || filters.tier !== "all" || filters.industry !== "all" || filters.country !== "all" || filters.state !== "all" || accountSearchQuery) && (
+            {(filters.division !== "all" || filters.size !== "all" || filters.tier !== "all" || filters.industry !== "all" || filters.country !== "all" || filters.state !== "all" || filters.assignment_status !== "all" || accountSearchQuery) && (
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -2094,11 +2191,11 @@ export default function SellerDetailPage() {
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-blue-900">
-                        Showing {availableAccountsWithFitPaginated?.totalCount || 0} available account{(availableAccountsWithFitPaginated?.totalCount || 0) !== 1 ? 's' : ''}
+                        Showing {allAccountsWithAssignmentStatus?.totalCount || 0} accounts (all accounts with assignment status)
                       </p>
                       <p className="text-xs text-blue-700">
                         {accountSearchQuery && `Matching "${accountSearchQuery}"`}
-                        {(filters.division !== "all" || filters.size !== "all" || filters.tier !== "all" || filters.industry !== "all" || filters.country !== "all" || filters.state !== "all") && ' with applied filters'}
+                        {(filters.division !== "all" || filters.size !== "all" || filters.tier !== "all" || filters.industry !== "all" || filters.country !== "all" || filters.state !== "all" || filters.assignment_status !== "all") && ' with applied filters'}
                       </p>
                     </div>
                   </div>
@@ -2106,7 +2203,7 @@ export default function SellerDetailPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      setFilters({ division: "all", size: "all", tier: "all", industry: "all", country: "all", state: "all" });
+                      setFilters({ division: "all", size: "all", tier: "all", industry: "all", country: "all", state: "all", assignment_status: "all" });
                       setAccountSearchQuery("");
                     }}
                     className="text-xs border-blue-300 text-blue-700 hover:bg-blue-100"
@@ -2123,7 +2220,7 @@ export default function SellerDetailPage() {
               <DataLoader text="Loading account data..." />
             ) : (
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2 mb-6">
+                <TabsList className="grid w-full grid-cols-3 mb-6">
                   <TabsTrigger value="pinning" className="flex items-center gap-2">
                     <Target className="h-4 w-4" />
                     Account Pinning
@@ -2132,111 +2229,96 @@ export default function SellerDetailPage() {
                     <Search className="h-4 w-4" />
                     Account Exploration
                   </TabsTrigger>
+                  <TabsTrigger value="chat" className="flex items-center gap-2">
+                    <MessageCircle className="h-4 w-4" />
+                    Chat
+                  </TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="pinning" className="mt-0">
-                  <div className="min-h-[800px] rounded-xl border border-slate-200 shadow-lg bg-white grid grid-cols-4 lg:grid-cols-5 overflow-hidden">
-                <div className="hidden lg:block border-r border-slate-200 min-w-0 w-full bg-gradient-to-b from-blue-50/30 to-transparent">
-                  <AccountColumn
-                    id="original"
-                    title="Original Accounts"
-                    accounts={(originalPaginated?.accounts || []) as Account[]}
-                    totalCount={originalPaginated?.totalCount || 0}
-                    emptyMessage="No original accounts"
-                    isReadOnly
-                    recentlyMovedAccounts={recentlyMovedAccounts}
-                    paginationData={originalPaginated}
-                    currentPage={originalPage}
-                    onPageChange={setOriginalPage}
-                  />
-                </div>
-                
-                <div className="border-r border-slate-200 min-w-0 w-full bg-gradient-to-b from-green-50/30 to-transparent">
-                  <AccountColumn
-                    id="must_keep"
-                    title="Must Keep"
-                    accounts={(mustKeepPaginated?.accounts || []) as Account[]}
-                    totalCount={mustKeepPaginated?.totalCount || 0}
-                    emptyMessage="No accounts marked as must keep"
-                    userRole={profile?.role}
-                    onStatusChange={handleStatusChange}
-                    recentlyMovedAccounts={recentlyMovedAccounts}
-                    paginationData={mustKeepPaginated}
-                    currentPage={mustKeepPage}
-                    onPageChange={setMustKeepPage}
-                  />
-                </div>
-                
-                <div className="border-r border-slate-200 min-w-0 w-full bg-gradient-to-b from-yellow-50/30 to-transparent">
-                  <AccountColumn
-                    id="for_discussion"
-                    title="For Discussion"
-                    accounts={(forDiscussionPaginated?.accounts || []) as Account[]}
-                    totalCount={forDiscussionPaginated?.totalCount || 0}
-                    emptyMessage="No accounts for discussion"
-                    userRole={profile?.role}
-                    onStatusChange={handleStatusChange}
-                    recentlyMovedAccounts={recentlyMovedAccounts}
-                    paginationData={forDiscussionPaginated}
-                    currentPage={forDiscussionPage}
-                    onPageChange={setForDiscussionPage}
-                  />
-                </div>
-                
-                <div className="border-r border-slate-200 min-w-0 w-full bg-gradient-to-b from-red-50/30 to-transparent">
-                  <AccountColumn
-                    id="to_be_peeled"
-                    title="To be Peeled"
-                    accounts={(toBePeeledPaginated?.accounts || []) as Account[]}
-                    totalCount={toBePeeledPaginated?.totalCount || 0}
-                    emptyMessage="No accounts to be peeled"
-                    userRole={profile?.role}
-                    onStatusChange={handleStatusChange}
-                    recentlyMovedAccounts={recentlyMovedAccounts}
-                    paginationData={toBePeeledPaginated}
-                    currentPage={toBePeeledPage}
-                    onPageChange={setToBePeeledPage}
-                  />
-                </div>
-                
-                <div className="min-w-0 w-full pr-2 bg-gradient-to-b from-slate-50/30 to-transparent">
-
-                  <AccountColumn
-                    id="available"
-                    title="Available Accounts"
-                    accounts={availableAccountsWithFitPaginated?.accounts || []}
-                    totalCount={availableAccountsWithFitPaginated?.totalCount || 0}
-                    emptyMessage="No available accounts"
-                    userRole={profile?.role}
-                    onStatusChange={handleStatusChange}
-                    recentlyMovedAccounts={recentlyMovedAccounts}
-                    paginationData={availableAccountsWithFitPaginated}
-                    currentPage={availableAccountsPage}
-                    onPageChange={setAvailableAccountsPage}
-                    searchQuery={availableAccountsSearch}
-                    onSearchChange={(query) => {
-                      setAvailableAccountsSearch(query);
-                      setAvailableAccountsPage(1); // Reset to first page when searching
-                    }}
-                  />
-                  
-                </div>
+                  <div className="h-[800px] rounded-xl border border-slate-200 shadow-lg bg-white grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 overflow-y-auto">
+                    {/* Original Accounts - Always visible now */}
+                    <div className="border-r border-slate-200 min-w-0 w-full bg-gradient-to-b from-blue-50/30 to-transparent">
+                      <AccountColumn
+                        id="original"
+                        title="Original Accounts"
+                        accounts={(originalPaginated?.accounts || []) as Account[]}
+                        totalCount={originalPaginated?.totalCount || 0}
+                        emptyMessage="No original accounts"
+                        isReadOnly
+                        recentlyMovedAccounts={recentlyMovedAccounts}
+                        paginationData={originalPaginated}
+                        currentPage={originalPage}
+                        onPageChange={setOriginalPage}
+                      />
+                    </div>
+                    
+                    {/* Must Keep */}
+                    <div className="border-r border-slate-200 min-w-0 w-full bg-gradient-to-b from-green-50/30 to-transparent">
+                      <AccountColumn
+                        id="must_keep"
+                        title="Must Keep"
+                        accounts={(mustKeepPaginated?.accounts || []) as Account[]}
+                        totalCount={mustKeepPaginated?.totalCount || 0}
+                        emptyMessage="No accounts marked as must keep"
+                        userRole={profile?.role}
+                        onStatusChange={handleStatusChange}
+                        recentlyMovedAccounts={recentlyMovedAccounts}
+                        paginationData={mustKeepPaginated}
+                        currentPage={mustKeepPage}
+                        onPageChange={setMustKeepPage}
+                      />
+                    </div>
+                    
+                    {/* For Discussion */}
+                    <div className="border-r border-slate-200 min-w-0 w-full bg-gradient-to-b from-yellow-50/30 to-transparent">
+                      <AccountColumn
+                        id="for_discussion"
+                        title="For Discussion"
+                        accounts={(forDiscussionPaginated?.accounts || []) as Account[]}
+                        totalCount={forDiscussionPaginated?.totalCount || 0}
+                        emptyMessage="No accounts for discussion"
+                        userRole={profile?.role}
+                        onStatusChange={handleStatusChange}
+                        recentlyMovedAccounts={recentlyMovedAccounts}
+                        paginationData={forDiscussionPaginated}
+                        currentPage={forDiscussionPage}
+                        onPageChange={setForDiscussionPage}
+                      />
+                    </div>
+                    
+                    {/* To be Peeled */}
+                    <div className="min-w-0 w-full bg-gradient-to-b from-red-50/30 to-transparent">
+                      <AccountColumn
+                        id="to_be_peeled"
+                        title="To be Peeled"
+                        accounts={(toBePeeledPaginated?.accounts || []) as Account[]}
+                        totalCount={toBePeeledPaginated?.totalCount || 0}
+                        emptyMessage="No accounts to be peeled"
+                        userRole={profile?.role}
+                        onStatusChange={handleStatusChange}
+                        recentlyMovedAccounts={recentlyMovedAccounts}
+                        paginationData={toBePeeledPaginated}
+                        currentPage={toBePeeledPage}
+                        onPageChange={setToBePeeledPage}
+                      />
+                    </div>
                   </div>
                 </TabsContent>
                 
                 <TabsContent value="exploration" className="mt-0">
                   <div className="min-h-[800px] rounded-xl border border-slate-200 shadow-lg bg-white overflow-hidden">
                     <div className="w-full bg-gradient-to-b from-slate-50/30 to-transparent">
-                      <AccountColumn
+                      <AccountTable
                         id="available"
-                        title="Available Accounts"
-                        accounts={availableAccountsWithFitPaginated?.accounts || []}
-                        totalCount={availableAccountsWithFitPaginated?.totalCount || 0}
-                        emptyMessage="No available accounts"
+                        title="All Accounts (with assignment status)"
+                        accounts={allAccountsWithAssignmentStatus?.accounts || []}
+                        totalCount={allAccountsWithAssignmentStatus?.totalCount || 0}
+                        emptyMessage="No accounts found"
                         userRole={profile?.role}
                         onStatusChange={handleStatusChange}
                         recentlyMovedAccounts={recentlyMovedAccounts}
-                        paginationData={availableAccountsWithFitPaginated}
+                        paginationData={allAccountsWithAssignmentStatus}
                         currentPage={availableAccountsPage}
                         onPageChange={setAvailableAccountsPage}
                         searchQuery={availableAccountsSearch}
@@ -2248,6 +2330,13 @@ export default function SellerDetailPage() {
                       />
                     </div>
                   </div>
+                </TabsContent>
+                
+                <TabsContent value="chat" className="mt-0">
+                  <SellerChat
+                    sellerId={id}
+                    sellerName={sellerDetailData?.seller?.name || seller?.name || 'Unknown Seller'}
+                  />
                 </TabsContent>
               </Tabs>
             )}
@@ -2292,9 +2381,10 @@ const AccountColumn = memo(function AccountColumn({
   isExplorationMode?: boolean;
 }) {
   return (
-    <div className="h-full flex flex-col transition-all duration-200 w-full overflow-hidden min-w-0">
+    <div className="flex flex-col transition-all duration-200 w-full min-w-0 bg-white">
+      {/* Sticky Header */}
       <div className={cn(
-        "border-b transition-all duration-200 shadow-sm",
+        "border-b transition-all duration-200 shadow-sm sticky top-0 z-10 bg-white",
         id === "original" && "bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200",
         id === "must_keep" && "bg-gradient-to-r from-green-50 to-emerald-50 border-green-200",
         id === "for_discussion" && "bg-gradient-to-r from-yellow-50 to-amber-50 border-yellow-200",
@@ -2348,15 +2438,16 @@ const AccountColumn = memo(function AccountColumn({
         )}
       </div>
       
-      <ScrollArea className="flex-1">
+      {/* Content Area - No individual scrolling */}
+      <div className="flex-1">
         <div className={cn(
-          "p-4 min-h-full transition-all duration-200 w-full max-w-full min-w-0",
-          isExplorationMode ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" : "space-y-4"
+          "p-3 transition-all duration-200 w-full max-w-full min-w-0",
+          isExplorationMode ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" : "space-y-3"
         )}>
           {accounts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-slate-500 col-span-full">
-              <div className="p-4 bg-slate-100 rounded-full mb-4">
-                <Building2 className="h-8 w-8 opacity-60" />
+            <div className="flex flex-col items-center justify-center py-12 text-slate-500 col-span-full">
+              <div className="p-3 bg-slate-100 rounded-full mb-3">
+                <Building2 className="h-6 w-6 opacity-60" />
               </div>
               <p className="text-sm font-medium text-center text-slate-600">{emptyMessage}</p>
               <p className="text-xs text-slate-400 mt-1">No accounts to display</p>
@@ -2377,16 +2468,16 @@ const AccountColumn = memo(function AccountColumn({
             </>
           )}
         </div>
-      </ScrollArea>
+      </div>
       
-          {/* Pagination Controls - for all columns with pagination data */}
-          {paginationData && (
-        <div className="p-3 bg-white border-t border-slate-200">
-          <div className="flex flex-col gap-3">
+      {/* Sticky Pagination Controls */}
+      {paginationData && (
+        <div className="p-3 bg-slate-50 border-t border-slate-200 flex-shrink-0 sticky bottom-0 z-10">
+          <div className="flex flex-col gap-2">
             {/* Results info - only show if there are accounts */}
             {paginationData && paginationData.totalCount > 0 && (
-              <div className="text-sm text-gray-600 text-center">
-                {`Showing ${((currentPage || 1) - 1) * 25 + 1} to ${Math.min((currentPage || 1) * 25, paginationData.totalCount)} of ${paginationData.totalCount} accounts`}
+              <div className="text-xs text-slate-600 text-center">
+                {`${((currentPage || 1) - 1) * 25 + 1}-${Math.min((currentPage || 1) * 25, paginationData.totalCount)} of ${paginationData.totalCount}`}
               </div>
             )}
             
@@ -2398,7 +2489,7 @@ const AccountColumn = memo(function AccountColumn({
                   size="sm"
                   onClick={() => onPageChange?.(Math.max(1, (currentPage || 1) - 1))}
                   disabled={currentPage === 1}
-                  className="px-2 py-1 h-8"
+                  className="px-2 py-1 h-7 text-xs"
                 >
                   ←
                 </Button>
@@ -2424,7 +2515,7 @@ const AccountColumn = memo(function AccountColumn({
                       variant={pageNum === currentPage ? "default" : "outline"}
                       size="sm"
                       onClick={() => onPageChange?.(pageNum)}
-                      className="w-8 h-8 p-0"
+                      className="w-7 h-7 p-0 text-xs"
                     >
                       {pageNum}
                     </Button>
@@ -2436,7 +2527,7 @@ const AccountColumn = memo(function AccountColumn({
                   size="sm"
                   onClick={() => onPageChange?.(Math.min(paginationData.totalPages, (currentPage || 1) + 1))}
                   disabled={currentPage === paginationData.totalPages}
-                  className="px-2 py-1 h-8"
+                  className="px-2 py-1 h-7 text-xs"
                 >
                   →
                 </Button>
@@ -2449,6 +2540,406 @@ const AccountColumn = memo(function AccountColumn({
   );
 });
 
+const AccountTable = ({ 
+  id, 
+  title, 
+  accounts, 
+  totalCount,
+  emptyMessage,
+  isReadOnly,
+  userRole,
+  onStatusChange,
+  recentlyMovedAccounts,
+  paginationData,
+  currentPage,
+  onPageChange,
+  searchQuery,
+  onSearchChange,
+  isExplorationMode = false,
+}: { 
+  id: string;
+  title: string;
+  accounts: Account[];
+  totalCount?: number;
+  emptyMessage: string;
+  isReadOnly?: boolean;
+  userRole?: string;
+  onStatusChange?: (accountId: string, newStatus: string) => void;
+  recentlyMovedAccounts?: Set<string>;
+  paginationData?: any;
+  currentPage?: number;
+  onPageChange?: (page: number) => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  isExplorationMode?: boolean;
+}) => {
+  // Format revenue helper
+  const formatRevenue = (revenue: number) => {
+    if (revenue >= 1_000_000) {
+      return `$${(revenue / 1_000_000).toFixed(1)}M`;
+    } else if (revenue >= 1_000) {
+      return `$${(revenue / 1_000).toFixed(0)}K`;
+    } else {
+      return `$${revenue.toFixed(0)}`;
+    }
+  };
+
+  // Check if account is assigned to another seller
+  const isAssignedToOther = (account: Account) => 
+    account.assignment_status && account.assignment_status !== 'available' && account.assignment_status !== account.status;
+
+  // Get assignment status for display
+  const getAssignmentStatus = (account: Account) => {
+    if (account.assignment_status === 'available') return null;
+    if (account.assignment_status === account.status) return null; // Same seller
+    return account.assignment_status;
+  };
+
+  return (
+    <div className="h-full flex flex-col transition-all duration-200 w-full overflow-hidden min-w-0">
+      <div className={cn(
+        "border-b transition-all duration-200 shadow-sm",
+        id === "original" && "bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200",
+        id === "must_keep" && "bg-gradient-to-r from-emerald-50 to-green-100 border-emerald-200",
+        id === "for_discussion" && "bg-gradient-to-r from-amber-50 to-yellow-100 border-amber-200",
+        id === "to_be_peeled" && "bg-gradient-to-r from-red-50 to-rose-100 border-red-200",
+        id === "available" && "bg-gradient-to-r from-slate-50 to-slate-100 border-slate-200"
+      )}>
+        <div className="p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white/80 rounded-lg shadow-sm border border-white/60">
+                <Building2 className="h-5 w-5 text-slate-700" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">{title}</h3>
+                <p className="text-sm text-slate-600">
+                  {totalCount || 0} accounts
+                </p>
+              </div>
+            </div>
+            
+            {/* Search and Filters */}
+            <div className="flex items-center gap-3">
+              {onSearchChange && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    placeholder="Search accounts..."
+                    value={searchQuery || ""}
+                    onChange={(e) => onSearchChange(e.target.value)}
+                    className="pl-10 w-64"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-hidden">
+        {accounts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-slate-500">
+            <div className="p-4 bg-slate-100 rounded-full mb-4">
+              <Building2 className="h-8 w-8 opacity-60" />
+            </div>
+            <p className="text-sm font-medium text-center text-slate-600">{emptyMessage}</p>
+            <p className="text-xs text-slate-400 mt-1">No accounts to display</p>
+          </div>
+        ) : (
+          <div className="overflow-auto h-full">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[200px]">Account</TableHead>
+                  <TableHead className="w-[100px]">Division</TableHead>
+                  <TableHead className="w-[100px]">Revenue</TableHead>
+                  <TableHead className="w-[100px]">Size</TableHead>
+                  <TableHead className="w-[100px]">Tier</TableHead>
+                  <TableHead className="w-[120px]">Location</TableHead>
+                  <TableHead className="w-[150px]">Industry</TableHead>
+                  <TableHead className="w-[100px]">Match %</TableHead>
+                  <TableHead className="w-[120px]">Assignment</TableHead>
+                  <TableHead className="w-[120px]">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {accounts.map((account) => {
+                  const totalRevenue = account.revenue_breakdown.esg + account.revenue_breakdown.gdt + 
+                                    account.revenue_breakdown.gvc + account.revenue_breakdown.msg_us;
+                  const isAssigned = isAssignedToOther(account);
+                  const assignmentStatus = getAssignmentStatus(account);
+                  const isRecentlyMoved = recentlyMovedAccounts?.has(account.id) || false;
+                  
+                  return (
+                    <TableRow 
+                      key={`${id}-${account.id}-${account.status || 'original'}`}
+                      className={cn(
+                        "transition-all duration-200",
+                        isAssigned && "bg-slate-100/80 opacity-75",
+                        isRecentlyMoved && "ring-2 ring-blue-400 ring-opacity-60 bg-blue-50/30",
+                        !isReadOnly && !isAssigned && "hover:bg-slate-50 cursor-pointer"
+                      )}
+                    >
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1 bg-slate-100 rounded">
+                            <Building2 className="h-3 w-3 text-slate-700" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-semibold text-sm truncate" title={account.name}>
+                              {account.name}
+                            </div>
+                            {account.city && (
+                              <div className="text-xs text-slate-500">{account.city}</div>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">
+                          {account.current_division}
+                        </Badge>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <div className="text-sm font-semibold">
+                          {formatRevenue(totalRevenue)}
+                        </div>
+                      </TableCell>
+                      
+                      <TableCell>
+                        {account.size && (
+                          <span className="text-sm capitalize">{account.size}</span>
+                        )}
+                      </TableCell>
+                      
+                      <TableCell>
+                        {account.tier && (
+                          <span className="text-sm">{account.tier}</span>
+                        )}
+                      </TableCell>
+                      
+                      <TableCell>
+                        <div className="text-sm">
+                          {account.state && (
+                            <div>{account.state}</div>
+                          )}
+                          {!account.state && account.country && (
+                            <div>{account.country}</div>
+                          )}
+                        </div>
+                      </TableCell>
+                      
+                      <TableCell>
+                        {account.industry && (
+                          <div className="text-sm truncate max-w-[140px]" title={account.industry}>
+                            {account.industry}
+                          </div>
+                        )}
+                      </TableCell>
+                      
+                      <TableCell>
+                        {account.fit_percentage !== undefined && (
+                          <div className={cn(
+                            "text-sm font-semibold px-2 py-1 rounded",
+                            account.fit_percentage >= 80 && "bg-emerald-100 text-emerald-800",
+                            account.fit_percentage >= 60 && account.fit_percentage < 80 && "bg-amber-100 text-amber-800",
+                            account.fit_percentage < 60 && "bg-red-100 text-red-800"
+                          )}>
+                            {account.fit_percentage}%
+                          </div>
+                        )}
+                      </TableCell>
+                      
+                      <TableCell>
+                        {isAssigned && account.assigned_seller_name ? (
+                          <div className="flex items-center gap-1 text-sm text-orange-700">
+                            <LockIcon className="h-3 w-3" />
+                            <span className="truncate max-w-[100px]" title={account.assigned_seller_name}>
+                              {account.assigned_seller_name}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-slate-500">Available</span>
+                        )}
+                      </TableCell>
+                      
+                      <TableCell>
+                        {!isReadOnly && onStatusChange && userRole && !isAssigned ? (
+                          <Select
+                            value={account.status || "available"}
+                            onValueChange={(newStatus) => onStatusChange(account.id, newStatus)}
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="must_keep">Must Keep</SelectItem>
+                              <SelectItem value="for_discussion">For Discussion</SelectItem>
+                              <SelectItem value="to_be_peeled">To be Peeled</SelectItem>
+                              <SelectItem value="available">Available</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge 
+                            variant={account.status === 'must_keep' ? 'default' : 'secondary'}
+                            className="text-xs"
+                          >
+                            {account.status || 'available'}
+                          </Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+      
+      {/* Enhanced Pagination Controls */}
+      {paginationData && (
+        <div className="p-3 bg-white border-t border-slate-200">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between text-sm text-slate-600">
+              <span>
+                Showing {((currentPage || 1) - 1) * (paginationData.limit || 50) + 1} to{' '}
+                {Math.min((currentPage || 1) * (paginationData.limit || 50), paginationData.totalCount || 0)} of{' '}
+                {paginationData.totalCount || 0} accounts
+              </span>
+              <div className="flex items-center gap-2">
+                {/* First Page */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPageChange?.(1)}
+                  disabled={!currentPage || currentPage <= 1}
+                  className="px-2"
+                >
+                  «
+                </Button>
+                
+                {/* Previous Page */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPageChange?.((currentPage || 1) - 1)}
+                  disabled={!currentPage || currentPage <= 1}
+                >
+                  Previous
+                </Button>
+                
+                {/* Page Numbers */}
+                {(() => {
+                  const totalPages = paginationData.totalPages || 1;
+                  const current = currentPage || 1;
+                  const pages = [];
+                  
+                  // Calculate which page numbers to show
+                  let startPage = Math.max(1, current - 2);
+                  let endPage = Math.min(totalPages, current + 2);
+                  
+                  // Adjust if we're near the beginning or end
+                  if (current <= 3) {
+                    endPage = Math.min(5, totalPages);
+                  }
+                  if (current >= totalPages - 2) {
+                    startPage = Math.max(1, totalPages - 4);
+                  }
+                  
+                  // Add first page and ellipsis if needed
+                  if (startPage > 1) {
+                    pages.push(
+                      <Button
+                        key={1}
+                        variant={current === 1 ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => onPageChange?.(1)}
+                        className="px-3"
+                      >
+                        1
+                      </Button>
+                    );
+                    if (startPage > 2) {
+                      pages.push(
+                        <span key="ellipsis1" className="px-2 text-slate-400">
+                          ...
+                        </span>
+                      );
+                    }
+                  }
+                  
+                  // Add page numbers
+                  for (let i = startPage; i <= endPage; i++) {
+                    pages.push(
+                      <Button
+                        key={i}
+                        variant={current === i ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => onPageChange?.(i)}
+                        className="px-3"
+                      >
+                        {i}
+                      </Button>
+                    );
+                  }
+                  
+                  // Add last page and ellipsis if needed
+                  if (endPage < totalPages) {
+                    if (endPage < totalPages - 1) {
+                      pages.push(
+                        <span key="ellipsis2" className="px-2 text-slate-400">
+                          ...
+                        </span>
+                      );
+                    }
+                    pages.push(
+                      <Button
+                        key={totalPages}
+                        variant={current === totalPages ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => onPageChange?.(totalPages)}
+                        className="px-3"
+                      >
+                        {totalPages}
+                      </Button>
+                    );
+                  }
+                  
+                  return pages;
+                })()}
+                
+                {/* Next Page */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPageChange?.((currentPage || 1) + 1)}
+                  disabled={!currentPage || currentPage >= (paginationData.totalPages || 1)}
+                >
+                  Next
+                </Button>
+                
+                {/* Last Page */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPageChange?.(paginationData.totalPages || 1)}
+                  disabled={!currentPage || currentPage >= (paginationData.totalPages || 1)}
+                  className="px-2"
+                >
+                  »
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const AccountCard = memo(function AccountCard({ 
   account, 
@@ -2483,6 +2974,19 @@ const AccountCard = memo(function AccountCard({
     [account.status]
   );
 
+  // NEW: Check if account is assigned to another seller
+  const isAssignedToOther = useMemo(() => 
+    account.assignment_status && account.assignment_status !== 'available' && account.assignment_status !== account.status,
+    [account.assignment_status, account.status]
+  );
+
+  // NEW: Get assignment status for display
+  const assignmentStatus = useMemo(() => {
+    if (account.assignment_status === 'available') return null;
+    if (account.assignment_status === account.status) return null; // Same seller
+    return account.assignment_status;
+  }, [account.assignment_status, account.status]);
+
   // Memoize the status change handler
   const handleStatusChangeCallback = useCallback((newStatus: string) => {
     if (onStatusChange) {
@@ -2492,155 +2996,156 @@ const AccountCard = memo(function AccountCard({
   
   return (
     <Card className={cn(
-      "transition-all duration-200 relative border-0 group overflow-hidden bg-white w-full max-w-full",
-      isExplorationMode ? "h-[280px]" : "h-[375px]",
-      !isReadOnly && "hover:shadow-xl hover:shadow-slate-300/40 hover:-translate-y-0.5 hover:scale-[1.002] cursor-pointer",
+      "transition-all duration-200 relative border-0 group overflow-hidden w-full max-w-full",
+      isExplorationMode ? "h-[280px]" : "h-[400px]", // Increased height to show all content
+      // NEW: Visual indicators for assigned accounts
+      isAssignedToOther ? "bg-slate-100/80 opacity-75 border-slate-300" : "bg-white",
+      !isReadOnly && !isAssignedToOther && "hover:shadow-lg hover:shadow-slate-300/30 hover:-translate-y-0.5 hover:scale-[1.01] cursor-pointer",
       isReadOnly && "bg-slate-50/95",
       isRecentlyMoved && "ring-2 ring-blue-400 ring-opacity-60 bg-blue-50/30",
-      "shadow-lg shadow-slate-300/25 border border-slate-200/50"
-    )} style={{ width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', pointerEvents: 'auto' }}>
+      "shadow-md shadow-slate-300/20 border border-slate-200/50"
+    )} style={{ width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', pointerEvents: isAssignedToOther ? 'none' : 'auto' }}>
       <CardContent className="p-0 overflow-hidden h-full flex flex-col">
-        {/* Ultra-Compact Executive Header */}
-        <div className="relative bg-gradient-to-br from-slate-50 to-white p-2 border-b border-slate-200/60">
-          {/* Status Indicator - Top Right */}
-          {isMustKeep && (
-            <div className="absolute top-1 right-1">
-              <div className="p-0.5 bg-gradient-to-br from-emerald-100 to-emerald-200 rounded-full shadow-sm">
-                <Shield className="h-2.5 w-2.5 text-emerald-700" />
+        {/* Clean Header */}
+        <div className="relative bg-white p-3 border-b border-slate-200">
+          {/* Status Indicators */}
+          <div className="absolute top-2 right-2 flex gap-1">
+            {isMustKeep && (
+              <div className="p-1 bg-emerald-100 rounded-full">
+                <Shield className="h-3 w-3 text-emerald-600" />
               </div>
-            </div>
-          )}
-          
-          {/* Recently Moved Indicator */}
-          {isRecentlyMoved && (
-            <div className="absolute top-1 left-1">
-              <div className="p-0.5 bg-gradient-to-br from-blue-100 to-blue-200 rounded-full shadow-sm animate-pulse">
-                <div className="h-2.5 w-2.5 bg-blue-600 rounded-full"></div>
+            )}
+            {isAssignedToOther && (
+              <div className="p-1 bg-orange-100 rounded-full">
+                <LockIcon className="h-3 w-3 text-orange-600" />
               </div>
-            </div>
-          )}
+            )}
+            {isRecentlyMoved && (
+              <div className="p-1 bg-blue-100 rounded-full animate-pulse">
+                <div className="h-3 w-3 bg-blue-600 rounded-full"></div>
+              </div>
+            )}
+          </div>
           
-          <div className="flex items-start justify-between gap-1">
+          <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <div className="p-1 bg-gradient-to-br from-slate-100 to-slate-200 rounded-md shadow-sm">
-                  <Building2 className="h-3 w-3 text-slate-700" />
+              <div className="flex items-center gap-2 mb-2">
+                <div className="p-1.5 bg-slate-100 rounded-lg">
+                  <Building2 className="h-4 w-4 text-slate-600" />
                 </div>
-                <h4 className="font-bold text-xs text-slate-900 leading-tight line-clamp-2 group-hover:text-slate-800 transition-colors" title={account.name}>
+                <h4 className="font-bold text-sm text-slate-900 leading-tight line-clamp-2 group-hover:text-slate-800 transition-colors" title={account.name}>
                   {account.name}
                 </h4>
               </div>
             </div>
             
-            {/* Ultra-Compact Division Badge and Match Badge */}
-            <div className="flex flex-col items-end gap-1">
+            {/* Division and Match Badges */}
+            <div className="flex flex-col items-end gap-1.5">
               <Badge 
                 variant="outline" 
-                className="text-xs font-bold bg-gradient-to-r from-slate-100 to-slate-200 border-slate-300 text-slate-800 px-1.5 py-0.5 shadow-sm flex-shrink-0 rounded-md"
+                className="text-xs font-semibold bg-slate-50 border-slate-300 text-slate-700 px-2 py-1 rounded-md"
               >
                 {account.current_division}
               </Badge>
               
-              {/* Match Badge - Only show for available accounts */}
-              {!isReadOnly && !account.status && account.fitPercentage !== undefined && (
+              {/* Match Badge */}
+              {account.fit_percentage !== undefined && (
                 <div className={cn(
-                  "flex items-center gap-1 px-1.5 py-0.5 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded shadow-sm text-xs",
-                  account.fitPercentage >= 80 && "bg-gradient-to-r from-emerald-50 to-green-50 text-emerald-800 border-emerald-300",
-                  account.fitPercentage >= 60 && account.fitPercentage < 80 && "bg-gradient-to-r from-amber-50 to-yellow-50 text-amber-800 border-amber-300",
-                  account.fitPercentage < 60 && "bg-gradient-to-r from-red-50 to-rose-50 text-red-800 border-red-300"
+                  "flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold",
+                  account.fit_percentage >= 80 && "bg-emerald-50 text-emerald-700 border border-emerald-200",
+                  account.fit_percentage >= 60 && account.fit_percentage < 80 && "bg-amber-50 text-amber-700 border border-amber-200",
+                  account.fit_percentage < 60 && "bg-red-50 text-red-700 border border-red-200"
                 )}>
-                  <span className="font-bold">Match:</span>
-                  <span className="font-semibold">{account.fitPercentage}%</span>
+                  <span>Match:</span>
+                  <span className="font-bold">{account.fit_percentage}%</span>
                 </div>
               )}
             </div>
           </div>
         </div>
         
-        {/* Ultra-Compact Account Details - Flex grow to fill space */}
-        <div className="p-2 space-y-1.5 w-full max-w-[200px] overflow-hidden flex-1">
-          {/* Financial & Classification */}
-          <div className="space-y-1">
-            <div className="text-xs font-bold text-slate-600 uppercase tracking-wide">Financial & Classification</div>
-            <div className="space-y-0.5">
-              {/* Revenue Badge */}
-              <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded shadow-sm">
-                <span className="text-xs font-bold text-slate-700">Revenue:</span>
-                <span className="text-xs font-semibold text-slate-800">{formattedRevenue}</span>
-              </div>
+        {/* Simplified Account Details - Essential info only */}
+        <div className="p-3 space-y-2 w-full overflow-hidden flex-1">
+          {/* Key Information Only */}
+          <div className="space-y-2">
+            {/* Revenue - Most Important */}
+            <div className="flex items-center justify-between px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md">
+              <span className="text-xs font-semibold text-slate-600">Revenue</span>
+              <span className="text-sm font-bold text-slate-900">{formattedRevenue}</span>
+            </div>
+            
+            {/* Size and Tier in one row */}
+            <div className="flex gap-1">
               {account.size && (
-                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded shadow-sm">
-                  <span className="text-xs font-bold text-slate-700">Size:</span>
-                  <span className="text-xs font-semibold text-slate-800 capitalize">{account.size}</span>
+                <div className="flex-1 px-2 py-1 bg-slate-50 border border-slate-200 rounded-md text-center">
+                  <span className="text-xs font-semibold text-slate-600 block">Size</span>
+                  <span className="text-xs font-bold text-slate-800 capitalize">{account.size}</span>
                 </div>
               )}
               {account.tier && (
-                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded shadow-sm">
-                  <span className="text-xs font-bold text-slate-700">Tier:</span>
-                  <span className="text-xs font-semibold text-slate-800">{account.tier}</span>
-                </div>
-              )}
-              {account.type && (
-                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded shadow-sm">
-                  <span className="text-xs font-bold text-slate-700">Type:</span>
-                  <span className="text-xs font-semibold text-slate-800">{account.type}</span>
+                <div className="flex-1 px-2 py-1 bg-slate-50 border border-slate-200 rounded-md text-center">
+                  <span className="text-xs font-semibold text-slate-600 block">Tier</span>
+                  <span className="text-xs font-bold text-slate-800">{account.tier}</span>
                 </div>
               )}
             </div>
-          </div>
-
-          {/* Location & Industry */}
-          <div className="space-y-1 w-full flex flex-col">
-            <div className="text-xs font-bold text-slate-600 uppercase tracking-wide">Location & Industry</div>
-            <div className="space-y-0.5">
-              {account.state && (
-                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded shadow-sm">
-                  <span className="text-xs font-bold text-slate-600">State:</span>
-                  <span className="text-xs font-semibold text-slate-700">{account.state}</span>
-                </div>
-              )}
-              {!account.state && account.country && (
-                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded shadow-sm">
-                  <span className="text-xs font-bold text-slate-600">Country:</span>
-                  <span className="text-xs font-semibold text-slate-700">{account.country}</span>
-                </div>
-              )}
-              {account.industry && (
-                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded shadow-sm" title={account.industry}>
-                  <span className="text-xs font-bold text-slate-600">Industry:</span>
-                  <span className="text-xs font-semibold text-slate-700 truncate">{account.industry}</span>
-                </div>
-              )}
-            </div>
+            
+            {/* Location */}
+            {(account.state || account.country) && (
+              <div className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md">
+                <span className="text-xs font-semibold text-slate-600 block">Location</span>
+                <span className="text-xs font-bold text-slate-800">{account.state || account.country}</span>
+              </div>
+            )}
+            
+            {/* Industry */}
+            {account.industry && (
+              <div className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md" title={account.industry}>
+                <span className="text-xs font-semibold text-slate-600 block">Industry</span>
+                <span className="text-xs font-bold text-slate-800 truncate">{account.industry}</span>
+              </div>
+            )}
+            
+            {/* Assigned to Other Seller */}
+            {isAssignedToOther && account.assigned_seller_name && (
+              <div className="flex items-center gap-1 px-2 py-1.5 bg-orange-50 border border-orange-200 rounded-md">
+                <LockIcon className="h-3 w-3 text-orange-600" />
+                <span className="text-xs font-semibold text-orange-700">Assigned to:</span>
+                <span className="text-xs font-bold text-orange-800 truncate">{account.assigned_seller_name}</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Ultra-Compact Status Change Section - Fixed at bottom */}
-        {!isReadOnly && onStatusChange && userRole && (
-          <div className="px-2 pb-2 mt-auto border-t border-slate-200/60 pt-2">
-            <div className="bg-gradient-to-r from-slate-50 to-slate-100 rounded-md p-1.5 border border-slate-200/60">
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5">
-                  <div className="p-0.5 bg-gradient-to-br from-slate-200 to-slate-300 rounded">
-                    <Target className="h-2.5 w-2.5 text-slate-700" />
-                  </div>
-                  <label className="text-xs font-bold text-slate-800 uppercase tracking-wide">Status</label>
-                </div>
-                <Select
-                  value={account.status || "available"}
-                  onValueChange={handleStatusChangeCallback}
-                >
-                  <SelectTrigger className="h-6 text-xs border-slate-300 focus:border-slate-400 focus:ring-slate-400 rounded bg-white shadow-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="must_keep">Must Keep</SelectItem>
-                    <SelectItem value="for_discussion">For Discussion</SelectItem>
-                    <SelectItem value="to_be_peeled">To be Peeled</SelectItem>
-                    <SelectItem value="available">Available</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+        {/* Compact Status Change Section */}
+        {!isReadOnly && onStatusChange && userRole && !isAssignedToOther && (
+          <div className="px-3 pb-2 mt-auto border-t border-slate-200 pt-2">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-700 block">Status</label>
+              <Select
+                value={account.status || "available"}
+                onValueChange={handleStatusChangeCallback}
+              >
+                <SelectTrigger className="h-7 text-xs border-slate-300 focus:border-blue-400 focus:ring-blue-400 rounded-md bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="must_keep">Must Keep</SelectItem>
+                  <SelectItem value="for_discussion">For Discussion</SelectItem>
+                  <SelectItem value="to_be_peeled">To be Peeled</SelectItem>
+                  <SelectItem value="available">Available</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+
+        {/* Assigned Account Message */}
+        {isAssignedToOther && (
+          <div className="px-3 pb-2 mt-auto border-t border-slate-200 pt-2">
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-orange-50 border border-orange-200 rounded-md">
+              <LockIcon className="h-3 w-3 text-orange-600" />
+              <span className="text-xs font-semibold text-orange-800">Assigned to another seller</span>
             </div>
           </div>
         )}

@@ -191,7 +191,7 @@ export default function DashboardPage() {
   const [revenueFilters, setRevenueFilters] = useState<string[]>(["healthy", "unhealthy"]);
   const [accountFilters, setAccountFilters] = useState<string[]>(["healthy", "unhealthy"]);
   const [seniorityFilters, setSeniorityFilters] = useState<string[]>(["junior", "senior"]);
-  const [divisionFilters, setDivisionFilters] = useState<string[]>(["ESG", "GDT", "GVC", "MSG_US", "MIXED"]);
+  const [divisionFilters, setDivisionFilters] = useState<string[]>(["ESG", "GDT", "GVC", "MSG_US"]);
   const [completionFilters, setCompletionFilters] = useState<string[]>(["completed", "not-completed"]);
   const [selectedManagers, setSelectedManagers] = useState<string[]>([]);
   const [managerFilters, setManagerFilters] = useState<string[]>([]);
@@ -295,6 +295,7 @@ export default function DashboardPage() {
       division: seller.division,
       size: seller.size,
       tenure_months: seller.tenure_months,
+      seniority_type: seller.seniority_type,
       industry_specialty: seller.industry_specialty,
       book_finalized: seller.book_finalized,
       manager: {
@@ -329,11 +330,10 @@ export default function DashboardPage() {
       (accountFilters.includes("healthy") && seller.isAccountCountHealthy) || 
       (accountFilters.includes("unhealthy") && !seller.isAccountCountHealthy);
     
-    // Seniority filter
-    const isSenior = (seller.tenure_months || 0) > 12;
+    // Seniority filter using seniority_type column
     const matchesSeniorityFilter = 
-      (seniorityFilters.includes("junior") && !isSenior) || 
-      (seniorityFilters.includes("senior") && isSenior);
+      (seniorityFilters.includes("junior") && seller.seniority_type === "junior") || 
+      (seniorityFilters.includes("senior") && seller.seniority_type === "senior");
     
     // Division filter
     const matchesDivisionFilter = divisionFilters.includes(seller.division);
@@ -401,7 +401,7 @@ export default function DashboardPage() {
     revenueFilters.length < 2 || 
     accountFilters.length < 2 ||
     seniorityFilters.length < 2 ||
-    divisionFilters.length < 5 ||
+    divisionFilters.length < 4 ||
     completionFilters.length < 2;
 
   // KPIs now automatically use filteredSellers, so they update with filters
@@ -517,7 +517,7 @@ export default function DashboardPage() {
               Seller Management
             </CardTitle>
             <CardDescription>
-              Search and filter sellers by performance metrics. Revenue and account health indicators are automatically calculated based on size (midmarket/enterprise) and experience level (junior ≤ 12 months, senior &gt; 12 months).
+              Search and filter sellers by performance metrics. Revenue and account health indicators are automatically calculated based on size (midmarket/enterprise) and experience level (junior/senior).
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -553,7 +553,7 @@ export default function DashboardPage() {
                         setRevenueFilters(["healthy", "unhealthy"]);
                         setAccountFilters(["healthy", "unhealthy"]);
                         setSeniorityFilters(["junior", "senior"]);
-                        setDivisionFilters(["ESG", "GDT", "GVC", "MSG_US", "MIXED"]);
+                        setDivisionFilters(["ESG", "GDT", "GVC", "MSG_US"]);
                         setCompletionFilters(["completed", "not-completed"]);
                         setManagerFilters([]);
                       }}
@@ -613,12 +613,12 @@ export default function DashboardPage() {
                     options={[
                       { 
                         value: "junior", 
-                        label: "Junior (≤ 12 months)", 
+                        label: "Junior", 
                         icon: <div className="w-2 h-2 rounded-full bg-amber-500"></div>
                       },
                       { 
                         value: "senior", 
-                        label: "Senior (> 12 months)", 
+                        label: "Senior", 
                         icon: <div className="w-2 h-2 rounded-full bg-blue-500"></div>
                       }
                     ]}
@@ -651,11 +651,6 @@ export default function DashboardPage() {
                         label: "MSG US", 
                         icon: <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
                       },
-                      { 
-                        value: "MIXED", 
-                        label: "MIXED", 
-                        icon: <div className="w-2 h-2 rounded-full bg-slate-500"></div>
-                      }
                     ]}
                     selectedValues={divisionFilters}
                     onSelectionChange={setDivisionFilters}
@@ -710,7 +705,7 @@ export default function DashboardPage() {
                         Experience: {seniorityFilters.length === 2 ? 'All' : seniorityFilters.includes('junior') ? 'Junior' : 'Senior'}
                       </span>
                       <span className="px-2 py-1 bg-slate-100 rounded text-slate-600">
-                        Division: {divisionFilters.length === 5 ? 'All' : `${divisionFilters.length} selected`}
+                        Division: {divisionFilters.length === 4 ? 'All' : `${divisionFilters.length} selected`}
                       </span>
                       <span className="px-2 py-1 bg-slate-100 rounded text-slate-600">
                         Status: {completionFilters.length === 2 ? 'All' : completionFilters.includes('completed') ? 'Completed' : 'In Progress'}
@@ -829,28 +824,33 @@ export default function DashboardPage() {
                             {seller.hasSizeMismatch && (
                               <div className="flex items-center gap-1 text-red-600 font-bold text-[10px] bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit">
                                 <span>🚩</span>
-                                <span>Size: {seller.mismatchedAccountCount} accounts</span>
+                                <span>
+                                  {seller.size === 'enterprise' 
+                                    ? `Midmarket accounts: ${seller.mismatchedAccountCount} accounts`
+                                    : `Enterprise accounts: ${seller.mismatchedAccountCount} accounts`
+                                  }
+                                </span>
                               </div>
                             )}
                             {/* Yellow Flag - industry mismatch - below red flag */}
                             {seller.hasIndustryMismatch && (
                               <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
                                 <span>⚠️</span>
-                                <span>Industry: {seller.industryMismatchedAccountCount} accounts</span>
+                                <span>Industry mismatch: {seller.industryMismatchedAccountCount} accounts</span>
                               </div>
                             )}
                             {/* Seniority Badge */}
                             <div className="flex items-center gap-2">
                               <Badge 
-                                variant={((seller.tenure_months || 0) > 12) ? 'default' : 'outline'}
+                                variant={seller.seniority_type === 'senior' ? 'default' : 'outline'}
                                 className={`text-xs ${
-                                  ((seller.tenure_months || 0) > 12)
+                                  seller.seniority_type === 'senior'
                                     ? 'bg-green-100 text-green-700 border-green-200' 
                                     : 'bg-orange-100 text-orange-700 border-orange-200'
                                 }`}
                               >
                                 <Star className="h-3 w-3 mr-1" />
-                                {((seller.tenure_months || 0) > 12) ? 'Senior' : 'Junior'}
+                                {seller.seniority_type === 'senior' ? 'Senior' : 'Junior'}
                               </Badge>
                             </div>
                           </div>
@@ -984,28 +984,33 @@ export default function DashboardPage() {
                             {seller.hasSizeMismatch && (
                               <div className="flex items-center gap-1 text-red-600 font-bold text-[10px] bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit">
                                 <span>🚩</span>
-                                <span>Size: {seller.mismatchedAccountCount} accounts</span>
+                                <span>
+                                  {seller.size === 'enterprise' 
+                                    ? `Midmarket accounts: ${seller.mismatchedAccountCount} accounts`
+                                    : `Enterprise accounts: ${seller.mismatchedAccountCount} accounts`
+                                  }
+                                </span>
                               </div>
                             )}
                             {/* Yellow Flag - industry mismatch - below red flag */}
                             {seller.hasIndustryMismatch && (
                               <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
                                 <span>⚠️</span>
-                                <span>Industry: {seller.industryMismatchedAccountCount} accounts</span>
+                                <span>Industry mismatch: {seller.industryMismatchedAccountCount} accounts</span>
                               </div>
                             )}
                             {/* Seniority Badge */}
                             <div className="flex items-center gap-2">
                               <Badge 
-                                variant={((seller.tenure_months || 0) > 12) ? 'default' : 'outline'}
+                                variant={seller.seniority_type === 'senior' ? 'default' : 'outline'}
                                 className={`text-xs ${
-                                  ((seller.tenure_months || 0) > 12)
+                                  seller.seniority_type === 'senior'
                                     ? 'bg-green-100 text-green-700 border-green-200' 
                                     : 'bg-orange-100 text-orange-700 border-orange-200'
                                 }`}
                               >
                                 <Star className="h-3 w-3 mr-1" />
-                                {((seller.tenure_months || 0) > 12) ? 'Senior' : 'Junior'}
+                                {seller.seniority_type === 'senior' ? 'Senior' : 'Junior'}
                               </Badge>
                             </div>
                           </div>

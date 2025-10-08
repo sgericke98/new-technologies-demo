@@ -7,7 +7,7 @@ import { AuthLoading } from '@/components/AuthLoading'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'BAIN Dashboard',
+  title: 'New Era Technology Account Assignment',
   description: 'Business Analytics and Intelligence Network',
 }
 

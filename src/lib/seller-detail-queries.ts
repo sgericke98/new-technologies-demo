@@ -6,6 +6,36 @@ import { supabase } from '@/integrations/supabase/client';
  * while maintaining all existing functionality and real-time updates
  */
 
+// New unified account type with assignment status
+export interface AccountWithAssignment {
+  id: string;
+  name: string;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  industry: string | null;
+  size: string | null;
+  tier: string | null;
+  type: string | null;
+  current_division: string;
+  lat: number | null;
+  lng: number | null;
+  total_revenue: number;
+  revenue_breakdown: {
+    esg: number;
+    gdt: number;
+    gvc: number;
+    msg_us: number;
+  };
+  assignment_status: 'available' | 'must_keep' | 'for_discussion' | 'to_be_peeled' | 'pinned' | 'assigned' | 'up_for_debate' | 'approval_for_pinning' | 'approval_for_assigning' | 'peeled';
+  assigned_seller_id?: string;
+  assigned_seller_name?: string;
+  fit_percentage: number;
+  is_available: boolean; // computed field
+  is_original: boolean;
+  isOriginal: boolean; // Alias for compatibility
+}
+
 export interface SellerDetailData {
   // Seller information
   seller: {
@@ -18,6 +48,7 @@ export interface SellerDetailData {
     book_finalized: boolean;
     lat: number | null;
     lng: number | null;
+    seniority_type: string | null;
   };
   
   // Account relationships with revenue
@@ -68,6 +99,10 @@ export interface SellerDetailData {
     isOriginal: false;
   }>;
   
+  // NEW: All accounts with assignment status
+  allAccounts: AccountWithAssignment[];
+  
+  // Legacy fields for backward compatibility
   availableAccounts: Array<{
     id: string;
     name: string;
@@ -137,7 +172,7 @@ export async function getSellerDetailData(sellerId: string): Promise<SellerDetai
       // 1. Get seller basic information
       supabase
         .from('sellers')
-        .select('id, name, division, size, tenure_months, industry_specialty, book_finalized, lat, lng')
+        .select('id, name, division, size, tenure_months, industry_specialty, book_finalized, lat, lng, seniority_type')
         .eq('id', sellerId)
         .single(),
       
@@ -253,6 +288,9 @@ export async function getSellerDetailData(sellerId: string): Promise<SellerDetai
     const totalRevenue = [...originalAccounts, ...assignedAccounts]
       .reduce((sum, account) => sum + account.total_revenue, 0);
 
+    // Get all accounts with assignment status (NEW UNIFIED APPROACH)
+    const allAccountsResult = await getAllAccountsWithAssignmentStatus(sellerId, 1, 1000); // Get all for now, can be paginated later
+    
     return {
       seller: {
         ...seller,
@@ -260,7 +298,8 @@ export async function getSellerDetailData(sellerId: string): Promise<SellerDetai
       },
       originalAccounts,
       assignedAccounts,
-      availableAccounts: [], // Available accounts are now fetched separately using getAvailableAccountsWithFit()
+      allAccounts: allAccountsResult.accounts, // NEW: All accounts with assignment status
+      availableAccounts: [], // Legacy - now derived from allAccounts
       restrictedAccounts,
       totalRevenue,
     };
@@ -722,8 +761,136 @@ export async function getOriginalAccountsPaginated(
 }
 
 /**
+ * Get all accounts with assignment status and fit percentage (NEW UNIFIED APPROACH)
+ * This replaces the separate available/restricted logic with a single unified view
+ */
+export async function getAllAccountsWithAssignmentStatus(
+  sellerId: string,
+  page: number = 1,
+  limit: number = 50,
+  search?: string,
+  sortBy: 'fit_percentage' | 'name' | 'total_revenue' = 'fit_percentage',
+  sortOrder: 'asc' | 'desc' = 'desc',
+  filters?: {
+    division?: string;
+    size?: string;
+    tier?: string;
+    industry?: string;
+    country?: string;
+    state?: string;
+    assignment_status?: string; // NEW: Filter for assignment status
+  }
+): Promise<{
+  accounts: AccountWithAssignment[];
+  totalCount: number;
+  totalPages: number;
+  currentPage: number;
+  limit: number;
+}> {
+  try {
+    const { data, error } = await (supabase as any)
+      .rpc('get_all_accounts_with_assignment_status', {
+        seller_id_param: sellerId,
+        page_param: page,
+        limit_param: limit,
+        search_param: search || null,
+        sort_by_param: sortBy,
+        sort_order_param: sortOrder,
+        division_filter: filters?.division || null,
+        size_filter: filters?.size || null,
+        tier_filter: filters?.tier || null,
+        industry_filter: filters?.industry || null,
+        country_filter: filters?.country || null,
+        state_filter: filters?.state || null,
+        assignment_status_filter: filters?.assignment_status || null,
+      });
+
+    if (error) throw error;
+
+    // The function returns a table, so we get an array of rows
+    const rows = data as Array<{
+      id: string;
+      name: string;
+      city: string | null;
+      state: string | null;
+      country: string | null;
+      industry: string | null;
+      size: string;
+      tier: string | null;
+      type: string | null;
+      current_division: string;
+      lat: number | null;
+      lng: number | null;
+      total_revenue: number;
+      revenue_esg: number;
+      revenue_gdt: number;
+      revenue_gvc: number;
+      revenue_msg_us: number;
+      assignment_status: string;
+      assigned_seller_id: string | null;
+      assigned_seller_name: string | null;
+      fit_percentage: number;
+      total_count: number;
+      total_pages: number;
+      current_page: number;
+      limit_per_page: number;
+    }>;
+
+    // Get pagination info from the first row (all rows have the same pagination info)
+    const firstRow = rows[0];
+    const paginationInfo = firstRow ? {
+      totalCount: firstRow.total_count,
+      totalPages: firstRow.total_pages,
+      currentPage: firstRow.current_page,
+      limit: firstRow.limit_per_page,
+    } : {
+      totalCount: 0,
+      totalPages: 0,
+      currentPage: page,
+      limit: limit,
+    };
+
+    return {
+      accounts: (rows || []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        city: item.city,
+        state: item.state,
+        country: item.country,
+        industry: item.industry,
+        size: item.size,
+        tier: item.tier,
+        type: item.type,
+        current_division: item.current_division,
+        lat: item.lat,
+        lng: item.lng,
+        total_revenue: item.total_revenue,
+        revenue_breakdown: {
+          esg: item.revenue_esg || 0,
+          gdt: item.revenue_gdt || 0,
+          gvc: item.revenue_gvc || 0,
+          msg_us: item.revenue_msg_us || 0,
+        },
+        assignment_status: item.assignment_status as any,
+        assigned_seller_id: item.assigned_seller_id || undefined,
+        assigned_seller_name: item.assigned_seller_name || undefined,
+        fit_percentage: item.fit_percentage,
+        is_available: item.assignment_status === 'available',
+        is_original: false, // This would need to be determined by checking original_relationships
+        isOriginal: false, // Alias for compatibility
+      })),
+      ...paginationInfo,
+    };
+  } catch (error) {
+    console.error('Error fetching all accounts with assignment status:', error);
+    throw error;
+  }
+}
+
+/**
  * Get available accounts with fit percentage for a specific seller (paginated with server-side filtering)
  * This uses the optimized function with fit calculation, filtering, and pagination
+ * @deprecated Use getAllAccountsWithAssignmentStatus instead for better performance and UX
  */
 export async function getAvailableAccountsWithFit(
   sellerId: string,
@@ -962,6 +1129,7 @@ export async function unassignAccountFromSeller(
 
 /**
  * Get all possible filter options for accounts
+ * This now uses a more efficient approach by getting all accounts at once
  */
 export async function getAccountFilterOptions(): Promise<{
   divisions: string[];
@@ -972,68 +1140,54 @@ export async function getAccountFilterOptions(): Promise<{
   states: string[];
 }> {
   try {
-    const [
-      { data: divisions },
-      { data: sizes },
-      { data: tiers },
-      { data: industries },
-      { data: countries },
-      { data: states }
-    ] = await Promise.all([
-      // Get unique divisions
-      supabase
-        .from('accounts')
-        .select('current_division')
-        .not('current_division', 'is', null)
-        .order('current_division'),
-      
-      // Get unique sizes
-      supabase
-        .from('accounts')
-        .select('size')
-        .not('size', 'is', null)
-        .order('size'),
-      
-      // Get unique tiers
-      supabase
-        .from('accounts')
-        .select('tier')
-        .not('tier', 'is', null)
-        .not('tier', 'eq', '')
-        .order('tier'),
-      
-      // Get unique industries
-      supabase
-        .from('accounts')
-        .select('industry')
-        .not('industry', 'is', null)
-        .not('industry', 'eq', '')
-        .order('industry'),
-      
-      // Get unique countries
-      supabase
-        .from('accounts')
-        .select('country')
-        .not('country', 'is', null)
-        .not('country', 'eq', '')
-        .order('country'),
-      
-      // Get unique states
-      supabase
-        .from('accounts')
-        .select('state')
-        .not('state', 'is', null)
-        .not('state', 'eq', '')
-        .order('state')
-    ]);
+    // Get all accounts with all their data in one query
+    const { data: allAccounts, error } = await supabase
+      .from('accounts')
+      .select('current_division, size, tier, industry, country, state')
+      .not('current_division', 'is', null)
+      .not('size', 'is', null)
+      .not('tier', 'is', null)
+      .not('industry', 'is', null)
+      .not('country', 'is', null)
+      .not('state', 'is', null);
+
+    if (error) {
+      console.error('Error fetching all accounts for filter options:', error);
+      throw error;
+    }
+
+    // Extract unique values from all accounts
+    const divisions = Array.from(new Set(
+      allAccounts?.map(a => a.current_division).filter(Boolean) || []
+    )).sort() as string[];
+
+    const sizes = Array.from(new Set(
+      allAccounts?.map(a => a.size).filter(Boolean) || []
+    )).sort() as string[];
+
+    const tiers = Array.from(new Set(
+      allAccounts?.map(a => a.tier).filter(Boolean) || []
+    )).sort() as string[];
+
+    const industries = Array.from(new Set(
+      allAccounts?.map(a => a.industry).filter(Boolean) || []
+    )).sort() as string[];
+
+    const countries = Array.from(new Set(
+      allAccounts?.map(a => a.country).filter(Boolean) || []
+    )).sort() as string[];
+
+    const states = Array.from(new Set(
+      allAccounts?.map(a => a.state).filter(Boolean) || []
+    )).sort() as string[];
 
     return {
-      divisions: Array.from(new Set(divisions?.map(d => d.current_division).filter(Boolean) || [])) as string[],
-      sizes: Array.from(new Set(sizes?.map(s => s.size).filter(Boolean) || [])) as string[],
-      tiers: Array.from(new Set(tiers?.map(t => t.tier).filter(Boolean) || [])) as string[],
-      industries: Array.from(new Set(industries?.map(i => i.industry).filter(Boolean) || [])) as string[],
-      countries: Array.from(new Set(countries?.map(c => c.country).filter(Boolean) || [])) as string[],
-      states: Array.from(new Set(states?.map(s => s.state).filter(Boolean) || [])) as string[]
+      divisions,
+      sizes,
+      tiers,
+      industries,
+      countries,
+      states
     };
   } catch (error) {
     console.error('Error fetching account filter options:', error);

@@ -147,7 +147,7 @@ export function validateAccountsTemplate(wb: XLSX.WorkBook): ValidationResult {
 }
 
 // Validate comprehensive template
-export function validateComprehensiveTemplate(wb: XLSX.WorkBook): ValidationResult {
+export function validateComprehensiveTemplate(wb: XLSX.WorkBook, mode: 'comprehensive' | 'comprehensive_add' = 'comprehensive'): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   
@@ -167,8 +167,14 @@ export function validateComprehensiveTemplate(wb: XLSX.WorkBook): ValidationResu
       const ws = wb.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
       
+      // For ADD mode, Managers sheet can have only header row (no data rows) 
+      // since managers might already exist in the database
       if (data.length < 2) {
-        errors.push(`${sheetName} sheet must have at least a header row and one data row`);
+        if (mode === 'comprehensive_add' && sheetName === 'Managers') {
+          warnings.push(`${sheetName} sheet has only header row - this is allowed in ADD mode if managers already exist in the database`);
+        } else {
+          errors.push(`${sheetName} sheet must have at least a header row and one data row`);
+        }
         continue;
       }
       

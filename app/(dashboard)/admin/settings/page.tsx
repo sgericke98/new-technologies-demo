@@ -429,34 +429,59 @@ export default function AdminSettingsPage() {
 
   // Handle file selection and show confirmation
   async function handleFileSelection(file: File | null, type: 'comprehensive' | 'sellers' | 'accounts' | 'comprehensive_add') {
-    if (!file) return;
+    console.log('🔍 DEBUG: handleFileSelection called', { file: file?.name, type });
+    
+    if (!file) {
+      console.log('❌ DEBUG: No file selected');
+      return;
+    }
     
     // Validate template first
+    console.log('🔍 DEBUG: Starting template validation...');
     addProgressLog(`Validating ${type} template...`);
     const validation = await validateTemplate(file, type);
     
+    console.log('🔍 DEBUG: Validation result', { validation });
+    
     if (!validation.isValid) {
+      console.log('❌ DEBUG: Validation failed, showing validation modal');
       setValidationErrors(validation.errors);
       setValidationWarnings(validation.warnings);
       setShowValidationModal(true);
       return;
     }
     
-    // Show warnings if any
+    // Show warnings if any, but handle ADD mode differently
     if (validation.warnings.length > 0) {
+      console.log('⚠️ DEBUG: Validation warnings found:', validation.warnings);
+      
+      // For ADD mode, if the only warning is about Managers sheet having only header row, proceed directly
+      if (type === 'comprehensive_add' && validation.warnings.length === 1 && 
+          validation.warnings[0].includes('Managers sheet has only header row')) {
+        console.log('✅ DEBUG: ADD mode with expected Managers warning, proceeding directly');
+        setSelectedFile(file);
+        setImportType(type);
+        setShowImportConfirmation(true);
+        return;
+      }
+      
+      console.log('⚠️ DEBUG: Showing validation modal for warnings');
       setValidationWarnings(validation.warnings);
       setValidationErrors([]);
       setShowValidationModal(true);
       return;
     }
     
+    console.log('✅ DEBUG: Validation passed, setting file and type');
     setSelectedFile(file);
     setImportType(type);
     
     // For comprehensive imports, show confirmation dialog
     if (type === 'comprehensive' || type === 'comprehensive_add') {
+      console.log('🔍 DEBUG: Showing import confirmation dialog for type:', type);
       setShowImportConfirmation(true);
     } else {
+      console.log('🔍 DEBUG: Proceeding with individual import');
       // For individual imports, proceed directly
       handleIndividualImport(file, type);
     }
@@ -523,9 +548,19 @@ export default function AdminSettingsPage() {
 
   // Comprehensive import handler
   async function handleComprehensiveImport() {
-    if (!selectedFile) return;
+    console.log('🔍 DEBUG: handleComprehensiveImport called', { 
+      selectedFile: selectedFile?.name, 
+      importType, 
+      profileId: profile?.id 
+    });
+    
+    if (!selectedFile) {
+      console.log('❌ DEBUG: No selected file, returning');
+      return;
+    }
     
     try {
+      console.log('🔍 DEBUG: Starting comprehensive import process');
       setComprehensiveImporting(true);
       setImportResults(null);
       setShowImportConfirmation(false);
@@ -536,14 +571,19 @@ export default function AdminSettingsPage() {
       let results;
       
       const modeText = importType === 'comprehensive_add' ? 'Add Mode' : 'Replace Mode';
+      console.log('🔍 DEBUG: Import mode:', modeText);
       updateProgressStep(`Starting ${modeText} import...`, 1, 7);
       addProgressLog(`Importing comprehensive data from ${selectedFile.name} (${modeText})`);
       
       updateProgressStep('Validating template...', 2, 7);
+      console.log('🔍 DEBUG: Validating template again...');
       
       // Validate template again for comprehensive imports
       const validation = await validateTemplate(selectedFile, importType);
+      console.log('🔍 DEBUG: Template validation result:', validation);
+      
       if (!validation.isValid) {
+        console.log('❌ DEBUG: Template validation failed');
         setProgressError(`Template validation failed: ${validation.errors.join(', ')}`);
         toast({
           title: "Invalid Template",
@@ -554,12 +594,17 @@ export default function AdminSettingsPage() {
       }
       
       updateProgressStep('Processing Excel file...', 3, 7);
+      console.log('🔍 DEBUG: About to call import function for type:', importType);
       
       if (importType === 'comprehensive_add') {
+        console.log('🔍 DEBUG: Calling importComprehensiveDataAdd...');
         results = await importComprehensiveDataAdd(selectedFile, userId, addProgressLog);
+        console.log('🔍 DEBUG: importComprehensiveDataAdd completed:', results);
       } else {
+        console.log('🔍 DEBUG: Calling importComprehensiveData...');
         updateProgressStep('Deleting existing data...', 4, 7);
         results = await importComprehensiveData(selectedFile, userId, addProgressLog);
+        console.log('🔍 DEBUG: importComprehensiveData completed:', results);
       }
       
       updateProgressStep('Importing new data...', 5, 7);
@@ -613,8 +658,9 @@ export default function AdminSettingsPage() {
         case 'accounts':
           return validateAccountsTemplate(wb);
         case 'comprehensive':
+          return validateComprehensiveTemplate(wb, 'comprehensive');
         case 'comprehensive_add':
-          return validateComprehensiveTemplate(wb);
+          return validateComprehensiveTemplate(wb, 'comprehensive_add');
         default:
           return { isValid: false, errors: ['Unknown import type'], warnings: [] };
       }
@@ -828,7 +874,7 @@ export default function AdminSettingsPage() {
                 <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
                   <h4 className="font-semibold text-blue-900 flex items-center gap-2 mb-3">
                     <Building2 className="h-4 w-4" />
-                    Midmarket Junior (≤ 12 months)
+                    Midmarket Junior
                   </h4>
                   <div className="space-y-3">
                     <div>
@@ -923,7 +969,7 @@ export default function AdminSettingsPage() {
                 <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-4">
                   <h4 className="font-semibold text-green-900 flex items-center gap-2 mb-3">
                     <Building2 className="h-4 w-4" />
-                    Midmarket Senior ({'>'} 12 months)
+                    Midmarket Senior
                   </h4>
                   <div className="space-y-3">
                     <div>
@@ -1018,7 +1064,7 @@ export default function AdminSettingsPage() {
                 <div className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-xl p-4">
                   <h4 className="font-semibold text-orange-900 flex items-center gap-2 mb-3">
                     <Building2 className="h-4 w-4" />
-                    Enterprise Junior (≤ 12 months)
+                    Enterprise Junior
                   </h4>
                   <div className="space-y-3">
                     <div>
@@ -1113,7 +1159,7 @@ export default function AdminSettingsPage() {
                 <div className="bg-gradient-to-r from-purple-50 to-violet-50 border border-purple-200 rounded-xl p-4">
                   <h4 className="font-semibold text-purple-900 flex items-center gap-2 mb-3">
                     <Building2 className="h-4 w-4" />
-                    Enterprise Senior ({'>'} 12 months)
+                    Enterprise Senior
                   </h4>
                   <div className="space-y-3">
                     <div>
@@ -1207,7 +1253,7 @@ export default function AdminSettingsPage() {
             <div className="bg-gradient-to-r from-slate-50 to-blue-50 border border-slate-200 rounded-xl p-4">
               <p className="text-sm text-slate-600 flex items-center gap-2">
                 <CheckCircle className="h-4 w-4 text-green-500" />
-                Sellers will be categorized by their account size (midmarket/enterprise) and seniority level (junior ≤ 12 months, senior {'>'} 12 months) based on their tenure_months field. Health indicators will show green for sellers within their category's ranges and red for those outside the configured thresholds.
+                Sellers will be categorized by their account size (midmarket/enterprise) and seniority level (junior/senior) based on their seniority_type field. Health indicators will show green for sellers within their category's ranges and red for those outside the configured thresholds.
               </p>
             </div>
           </CardContent>
@@ -1236,7 +1282,7 @@ export default function AdminSettingsPage() {
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-blue-900">Sellers Import</h3>
-                    <p className="text-sm text-blue-700">Update seller information and assignments</p>
+                    <p className="text-sm text-blue-700">Update seller information (not assignements)</p>
                   </div>
                 </div>
                 
@@ -1364,7 +1410,10 @@ export default function AdminSettingsPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => comprehensiveAddInputRef.current?.click()}
+                  onClick={() => {
+                    console.log('🔍 DEBUG: Add New Data button clicked');
+                    comprehensiveAddInputRef.current?.click();
+                  }}
                   disabled={comprehensiveImporting}
                   className="flex items-center gap-2"
                 >
@@ -1378,7 +1427,13 @@ export default function AdminSettingsPage() {
                 type="file"
                 accept=".xlsx"
                 className="hidden"
-                onChange={(e) => handleFileSelection(e.target.files?.[0] ?? null, 'comprehensive_add')}
+                onChange={(e) => {
+                  console.log('🔍 DEBUG: File input changed for comprehensive_add', { 
+                    file: e.target.files?.[0]?.name,
+                    fileSize: e.target.files?.[0]?.size 
+                  });
+                  handleFileSelection(e.target.files?.[0] ?? null, 'comprehensive_add');
+                }}
               />
               
               <div className="text-sm text-green-800">
@@ -1645,7 +1700,7 @@ export default function AdminSettingsPage() {
               <div className="mt-6 bg-gradient-to-r from-slate-50 to-blue-50 border border-slate-200 rounded-xl p-4">
                 <p className="text-sm text-slate-600 flex items-center gap-2">
                   <CheckCircle className="h-4 w-4 text-green-500" />
-                  Sellers will be automatically categorized based on their account size and tenure_months field. Junior sellers (≤ 12 months) and Senior sellers ({'>'} 12 months) will have different revenue expectations.
+                  Sellers will be automatically categorized based on their account size and seniority_type field. Junior sellers and Senior sellers will have different revenue expectations.
                 </p>
               </div>
             </CardContent>
@@ -1693,6 +1748,13 @@ export default function AdminSettingsPage() {
                     {importType === 'comprehensive_add' ? 'Add New Data' : 'Data Import Warning'}
                   </AlertDialogTitle>
                   <AlertDialogDescription className="text-base mt-4">
+                    {importType === 'comprehensive_add' 
+                      ? 'This import will ADD new data while preserving all existing records. New Excel data will be added to the database without affecting any current records. This is safe for incremental updates.'
+                      : 'This import will DELETE ALL existing data in the database. The new Excel data will completely replace all current records. This action cannot be undone.'
+                    }
+                  </AlertDialogDescription>
+                  
+                  <div className="mt-4">
                     {importType === 'comprehensive_add' ? (
                       <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
                         <div className="flex items-start gap-3">
@@ -1755,7 +1817,7 @@ export default function AdminSettingsPage() {
                         </div>
                       )}
                     </div>
-                  </AlertDialogDescription>
+                  </div>
                 </AlertDialogHeader>
                 <AlertDialogFooter className="gap-3">
                   <AlertDialogCancel 
@@ -1765,7 +1827,14 @@ export default function AdminSettingsPage() {
                     Cancel Import
                   </AlertDialogCancel>
                   <AlertDialogAction 
-                    onClick={handleComprehensiveImport}
+                    onClick={() => {
+                      console.log('🔍 DEBUG: AlertDialogAction clicked', { 
+                        importType, 
+                        comprehensiveImporting,
+                        selectedFile: selectedFile?.name 
+                      });
+                      handleComprehensiveImport();
+                    }}
                     disabled={comprehensiveImporting}
                     className={`flex items-center gap-2 ${importType === 'comprehensive_add' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} text-white`}
                   >
@@ -1807,6 +1876,15 @@ export default function AdminSettingsPage() {
               {importProgress.hasError ? 'Import Failed' : importProgress.isComplete ? 'Import Complete' : 'Import Progress'}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-base mt-4">
+              {importProgress.hasError 
+                ? `Import failed with the following error: ${importProgress.errorMessage}`
+                : importProgress.isComplete 
+                  ? 'Import completed successfully! Your data has been imported and the dashboard will refresh automatically.'
+                  : 'Import in progress... Please wait while we process your data.'
+              }
+            </AlertDialogDescription>
+            
+            <div className="mt-4">
               {importProgress.hasError ? (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                   <p className="text-red-800 font-medium">Import failed with the following error:</p>
@@ -1823,7 +1901,7 @@ export default function AdminSettingsPage() {
                   <p className="text-blue-700 text-sm mt-2">Please wait while we process your data.</p>
                 </div>
               )}
-            </AlertDialogDescription>
+            </div>
           </AlertDialogHeader>
           
           <div className="space-y-4">
@@ -1908,6 +1986,13 @@ export default function AdminSettingsPage() {
               {validationErrors.length > 0 ? 'Template Validation Failed' : 'Template Warnings'}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-base mt-4">
+              {validationErrors.length > 0 
+                ? 'The Excel file doesn\'t match the expected template. Please check the errors below and use the correct template format.'
+                : 'The Excel file has some warnings but can still be processed. Please review the warnings below.'
+              }
+            </AlertDialogDescription>
+            
+            <div className="mt-4">
               {validationErrors.length > 0 ? (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                   <p className="text-red-800 font-medium">The Excel file doesn't match the expected template:</p>
@@ -1917,7 +2002,7 @@ export default function AdminSettingsPage() {
                   <p className="text-yellow-800 font-medium">The Excel file has some warnings but can still be processed:</p>
                 </div>
               )}
-            </AlertDialogDescription>
+            </div>
           </AlertDialogHeader>
           
           <div className="space-y-4">
