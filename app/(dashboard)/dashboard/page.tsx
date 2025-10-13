@@ -684,7 +684,7 @@ export default function DashboardPage() {
                       },
                       { 
                         value: "not-completed", 
-                        label: "Book notfinalized", 
+                        label: "Book not finalized", 
                         icon: <div className="w-2 h-2 rounded-full bg-orange-500"></div>
                       }
                     ]}
@@ -859,8 +859,8 @@ export default function DashboardPage() {
                                 <span>🚩</span>
                                 <span>
                                   {seller.size === 'enterprise' 
-                                    ? `Has ${seller.mismatchedAccountCount} MM accounts`
-                                    : `Has ${seller.mismatchedAccountCount} ENT accounts`
+                                    ? `Has ${seller.mismatchedAccountCount} MM account(s)`
+                                    : `Has ${seller.mismatchedAccountCount} ENT account(s)`
                                   }
                                 </span>
                               </div>
@@ -869,7 +869,7 @@ export default function DashboardPage() {
                             {seller.hasIndustryMismatch && (
                               <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
                                 <span>⚠️</span>
-                                <span>{seller.industryMismatchedAccountCount} accounts with industry mismatch</span>
+                                <span>{seller.industryMismatchedAccountCount} account(s) with industry mismatch</span>
                               </div>
                             )}
                           </div>
@@ -999,28 +999,11 @@ export default function DashboardPage() {
                             <CardTitle className="text-base">{seller.name}</CardTitle>
                             <DivisionBadge division={seller.division} />
                           </div>
-                          <div className="flex flex-col gap-1 mb-2">
-                            {/* Red Flag - positioned above seniority badge */}
-                            {seller.hasSizeMismatch && (
-                              <div className="flex items-center gap-1 text-red-600 font-bold text-[10px] bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit">
-                                <span>🚩</span>
-                                <span>
-                                  {seller.size === 'enterprise' 
-                                    ? `Midmarket accounts: ${seller.mismatchedAccountCount} accounts`
-                                    : `Enterprise accounts: ${seller.mismatchedAccountCount} accounts`
-                                  }
-                                </span>
-                              </div>
-                            )}
-                            {/* Yellow Flag - industry mismatch - below red flag */}
-                            {seller.hasIndustryMismatch && (
-                              <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
-                                <span>⚠️</span>
-                                <span>Industry mismatch: {seller.industryMismatchedAccountCount} accounts</span>
-                              </div>
-                            )}
-                            {/* Seniority Badge */}
-                            <div className="flex items-center gap-2">
+                          <CardDescription className="text-xs">
+                            Supervisor: {seller.manager?.name || "No Manager"}
+                          </CardDescription>
+                          {/* Seniority Badge */}
+                          <div className="flex items-center gap-2">
                               <Badge 
                                 variant={seller.seniority_type === 'senior' ? 'default' : 'outline'}
                                 className={`text-xs ${
@@ -1033,21 +1016,38 @@ export default function DashboardPage() {
                                 {seller.seniority_type === 'senior' ? 'Senior' : 'Junior'}
                               </Badge>
                             </div>
+                          <div className="flex flex-col gap-1 mb-2">
+                            {/* Red Flag - positioned above seniority badge */}
+                            {seller.hasSizeMismatch && seller.mismatchedAccountCount > 0 && (
+                              <div className="flex items-center gap-1 text-red-600 font-bold text-[10px] bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit">
+                                <span>🚩</span>
+                                <span>
+                                  {seller.size === 'enterprise' 
+                                    ? `Has ${seller.mismatchedAccountCount} MM account(s)`
+                                    : `Has ${seller.mismatchedAccountCount} ENT account(s)`
+                                  }
+                                </span>
+                              </div>
+                            )}
+                            {/* Yellow Flag - industry mismatch - below red flag */}
+                            {seller.hasIndustryMismatch && (
+                              <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
+                                <span>⚠️</span>
+                                <span>{seller.industryMismatchedAccountCount} account(s) with industry mismatch</span>
+                              </div>
+                            )}
                           </div>
-                          <CardDescription className="text-xs">
-                            {seller.manager?.name || "No Manager"}
-                          </CardDescription>
                         </CardHeader>
                         <CardContent className="flex flex-col space-y-3">
                           <div className="space-y-1">
                             <div className="flex items-center justify-between">
-                              <p className="text-sm text-muted-foreground">
+                              <p className="text-base font-semibold text-black">
                                 {seller.accountCount || 0} accounts
                               </p>
                               <div className={`w-2 h-2 rounded-full ${seller.isAccountCountHealthy ? 'bg-green-500' : 'bg-red-500'}`} />
                             </div>
                             <div className="flex items-center justify-between">
-                              <p className="text-lg font-semibold text-primary">
+                              <p className="text-base font-semibold text-black">
                                 ${seller.totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                               </p>
                               <div className={`w-2 h-2 rounded-full ${seller.isRevenueHealthy ? 'bg-green-500' : 'bg-red-500'}`} />

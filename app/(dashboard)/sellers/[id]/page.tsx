@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Loader2, Building2, LockIcon, DollarSign, Map, MapPin, Calendar, Search, Users, Target, TrendingUp, Shield, Globe, Briefcase, MessageCircle } from "lucide-react";
+import { ArrowLeft, Loader2, Building2, LockIcon, DollarSign, Map, MapPin, Calendar, Search, Users, Target, TrendingUp, Globe, Briefcase, MessageCircle, ArrowUpDown, ArrowUp, ArrowDown, Shield } from "lucide-react";
 import React, { useEffect, useState, memo, useMemo, Suspense, lazy, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -735,18 +735,22 @@ export default function SellerDetailPage() {
   // Pagination state for must keep accounts
   const [mustKeepPage, setMustKeepPage] = useState(1);
   const [mustKeepLimit, setMustKeepLimit] = useState(25);
+  const [mustKeepSearch, setMustKeepSearch] = useState('');
 
   // Pagination state for for discussion accounts
   const [forDiscussionPage, setForDiscussionPage] = useState(1);
   const [forDiscussionLimit, setForDiscussionLimit] = useState(25);
+  const [forDiscussionSearch, setForDiscussionSearch] = useState('');
 
   // Pagination state for to be peeled accounts
   const [toBePeeledPage, setToBePeeledPage] = useState(1);
   const [toBePeeledLimit, setToBePeeledLimit] = useState(25);
+  const [toBePeeledSearch, setToBePeeledSearch] = useState('');
 
   // Pagination state for original accounts
   const [originalPage, setOriginalPage] = useState(1);
   const [originalLimit, setOriginalLimit] = useState(25);
+  const [originalSearch, setOriginalSearch] = useState('');
 
   // NEW UNIFIED APPROACH: Query for ALL accounts with assignment status (paginated)
   const { data: allAccountsWithAssignmentStatus } = useQuery({
@@ -779,31 +783,31 @@ export default function SellerDetailPage() {
   });
 
 
-  // OPTIMIZED: Query for must keep accounts (paginated) - NO FILTERS APPLIED
+  // OPTIMIZED: Query for must keep accounts (paginated) - WITH FILTERS AND SEARCH APPLIED
   const { data: mustKeepPaginated } = useQuery({
-    queryKey: ["mustKeepPaginated", id, mustKeepPage, mustKeepLimit],
-    queryFn: () => getAssignedAccountsPaginated(id!, 'must_keep', mustKeepPage, mustKeepLimit),
+    queryKey: ["mustKeepPaginated", id, mustKeepPage, mustKeepLimit, mustKeepSearch, filters.division, filters.size, filters.tier, filters.industry, filters.country, filters.state],
+    queryFn: () => getAssignedAccountsPaginated(id!, 'must_keep', mustKeepPage, mustKeepLimit, mustKeepSearch || undefined, filters),
     enabled: !!id && authorized,
   });
 
-  // OPTIMIZED: Query for for discussion accounts (paginated) - NO FILTERS APPLIED
+  // OPTIMIZED: Query for for discussion accounts (paginated) - WITH FILTERS AND SEARCH APPLIED
   const { data: forDiscussionPaginated } = useQuery({
-    queryKey: ["forDiscussionPaginated", id, forDiscussionPage, forDiscussionLimit],
-    queryFn: () => getAssignedAccountsPaginated(id!, 'for_discussion', forDiscussionPage, forDiscussionLimit),
+    queryKey: ["forDiscussionPaginated", id, forDiscussionPage, forDiscussionLimit, forDiscussionSearch, filters.division, filters.size, filters.tier, filters.industry, filters.country, filters.state],
+    queryFn: () => getAssignedAccountsPaginated(id!, 'for_discussion', forDiscussionPage, forDiscussionLimit, forDiscussionSearch || undefined, filters),
     enabled: !!id && authorized,
   });
 
-  // OPTIMIZED: Query for to be peeled accounts (paginated) - NO FILTERS APPLIED
+  // OPTIMIZED: Query for to be peeled accounts (paginated) - WITH FILTERS AND SEARCH APPLIED
   const { data: toBePeeledPaginated } = useQuery({
-    queryKey: ["toBePeeledPaginated", id, toBePeeledPage, toBePeeledLimit],
-    queryFn: () => getAssignedAccountsPaginated(id!, 'to_be_peeled', toBePeeledPage, toBePeeledLimit),
+    queryKey: ["toBePeeledPaginated", id, toBePeeledPage, toBePeeledLimit, toBePeeledSearch, filters.division, filters.size, filters.tier, filters.industry, filters.country, filters.state],
+    queryFn: () => getAssignedAccountsPaginated(id!, 'to_be_peeled', toBePeeledPage, toBePeeledLimit, toBePeeledSearch || undefined, filters),
     enabled: !!id && authorized,
   });
 
-  // OPTIMIZED: Query for original accounts (paginated) - NO FILTERS APPLIED
+  // OPTIMIZED: Query for original accounts (paginated) - WITH FILTERS AND SEARCH APPLIED
   const { data: originalPaginated } = useQuery({
-    queryKey: ["originalPaginated", id, originalPage, originalLimit],
-    queryFn: () => getOriginalAccountsPaginated(id!, originalPage, originalLimit),
+    queryKey: ["originalPaginated", id, originalPage, originalLimit, originalSearch, filters.division, filters.size, filters.tier, filters.industry, filters.country, filters.state],
+    queryFn: () => getOriginalAccountsPaginated(id!, originalPage, originalLimit, originalSearch || undefined, filters),
     enabled: !!id && authorized,
   });
 
@@ -1696,25 +1700,56 @@ export default function SellerDetailPage() {
               </Button>
             </Link>
             <div className="flex-1">
-              <h1 className="text-3xl lg:text-4xl font-bold text-slate-900 mb-2">{seller?.name || "Loading..."}</h1>
-              <div className="flex items-center gap-4 text-sm text-slate-600">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span className="font-medium">Active Seller</span>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <h1 className="text-3xl lg:text-4xl font-bold text-slate-900 mb-2">{seller?.name || "Loading..."}</h1>
+                  <div className="flex items-center gap-4 text-sm text-slate-600">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                      <span className="font-medium">Active Seller</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{location}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{tenure} tenure</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${
+                        seller?.seniority_type === 'senior' ? 'bg-green-500' : 'bg-blue-500'
+                      }`}></div>
+                      <span className="font-medium">
+                        {seller?.seniority_type === 'senior' ? 'Senior' : 'Junior'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{location}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{tenure} tenure</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${
-                    seller?.seniority_type === 'senior' ? 'bg-green-500' : 'bg-blue-500'
-                  }`}></div>
-                  <span className="font-medium">
-                    {seller?.seniority_type === 'senior' ? 'Senior' : 'Junior'}
-                  </span>
+                
+                {/* Book Finalized Status */}
+                <div className="flex items-center gap-3 bg-white/80 backdrop-blur-sm rounded-lg px-4 py-2.5 border border-slate-200 shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      isBookFinalized ? 'bg-green-500' : 'bg-yellow-500'
+                    }`}></div>
+                    <span className="text-sm font-semibold text-slate-700">
+                      {isBookFinalized ? 'Finalized' : 'Draft'}
+                    </span>
+                  </div>
+                  <div className="w-px h-6 bg-slate-200"></div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="header-book-finalized"
+                      checked={isBookFinalized}
+                      onCheckedChange={(checked) => handleFinalizedChange(checked as boolean)}
+                      className="h-4 w-4"
+                    />
+                    <label 
+                      htmlFor="header-book-finalized"
+                      className="text-sm font-medium cursor-pointer text-slate-700 hover:text-slate-900 transition-colors select-none"
+                    >
+                      Mark as finalized
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1723,9 +1758,9 @@ export default function SellerDetailPage() {
           {/* Compact Professional Seller Info Card */}
           {seller && (
             <div className="bg-gradient-to-br from-white via-slate-50 to-slate-100 rounded-2xl p-6 border border-slate-200/60 shadow-lg shadow-slate-200/20 mb-6 backdrop-blur-sm">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Seller Details */}
-                <div className="space-y-4 flex flex-col">
+                <div className="flex flex-col h-full">
                   <div className="flex items-center gap-3 mb-4 h-12">
                     <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-md shadow-blue-500/25">
                       <Users className="h-5 w-5 text-white" />
@@ -1736,7 +1771,7 @@ export default function SellerDetailPage() {
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-3 flex-1">
                     {/* Division */}
                     <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-blue-200">
                       <div className="flex items-center gap-2 mb-1">
@@ -1782,7 +1817,7 @@ export default function SellerDetailPage() {
                 </div>
 
                 {/* Compact Performance Metrics */}
-                <div className="space-y-4 flex flex-col">
+                <div className="flex flex-col h-full">
                   <div className="flex items-center gap-3 mb-4 h-12">
                     <div className="p-2 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg shadow-md shadow-emerald-500/25">
                       <TrendingUp className="h-5 w-5 text-white" />
@@ -1793,7 +1828,7 @@ export default function SellerDetailPage() {
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-3 flex-1">
                     {/* Total Revenue */}
                     <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-green-200">
                       <div className="flex items-center gap-2 mb-1">
@@ -1829,6 +1864,27 @@ export default function SellerDetailPage() {
                       </span>
                     </div>
 
+                    {/* Revenue per Account */}
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-teal-200">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="p-1 bg-teal-100 rounded-md">
+                          <TrendingUp className="h-3.5 w-3.5 text-teal-600" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Avg Rev/Account</span>
+                      </div>
+                      <span className="text-lg font-bold text-slate-900">
+                        {totalAccounts > 0 
+                          ? (totalRevenue / totalAccounts >= 1_000_000 
+                            ? `$${(totalRevenue / totalAccounts / 1_000_000).toFixed(1)}M`
+                            : totalRevenue / totalAccounts >= 1_000 
+                            ? `$${(totalRevenue / totalAccounts / 1_000).toFixed(0)}K`
+                            : `$${(totalRevenue / totalAccounts).toFixed(0)}`
+                          )
+                          : '$0'
+                        }
+                      </span>
+                    </div>
+
                     {/* Geographic Reach */}
                     <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-purple-200">
                       <div className="flex items-center gap-2 mb-1">
@@ -1838,40 +1894,6 @@ export default function SellerDetailPage() {
                         <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">States</span>
                       </div>
                       <span className="text-lg font-bold text-slate-900">{statesCount}</span>
-                    </div>
-
-                    {/* Book Status */}
-                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-amber-200">
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <div className="p-1 bg-amber-100 rounded-md">
-                            <Shield className="h-3.5 w-3.5 text-amber-600" />
-                          </div>
-                          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Status</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <div className={`w-1.5 h-1.5 rounded-full ${
-                            isBookFinalized ? 'bg-green-500' : 'bg-yellow-500'
-                          }`}></div>
-                          <span className="text-xs font-bold text-slate-900">
-                            {isBookFinalized ? 'Final' : 'Draft'}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="book-finalized"
-                          checked={isBookFinalized}
-                          onCheckedChange={(checked) => handleFinalizedChange(checked as boolean)}
-                          className="h-4 w-4"
-                        />
-                        <label 
-                          htmlFor="book-finalized"
-                          className="text-xs font-medium cursor-pointer text-slate-700 hover:text-slate-900 transition-colors"
-                        >
-                          Mark finalized
-                        </label>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -2281,6 +2303,11 @@ export default function SellerDetailPage() {
                         paginationData={originalPaginated}
                         currentPage={originalPage}
                         onPageChange={setOriginalPage}
+                        searchQuery={originalSearch}
+                        onSearchChange={(query) => {
+                          setOriginalSearch(query);
+                          setOriginalPage(1); // Reset to first page when searching
+                        }}
                       />
                     </div>
                     
@@ -2298,6 +2325,11 @@ export default function SellerDetailPage() {
                         paginationData={mustKeepPaginated}
                         currentPage={mustKeepPage}
                         onPageChange={setMustKeepPage}
+                        searchQuery={mustKeepSearch}
+                        onSearchChange={(query) => {
+                          setMustKeepSearch(query);
+                          setMustKeepPage(1); // Reset to first page when searching
+                        }}
                       />
                     </div>
                     
@@ -2315,6 +2347,11 @@ export default function SellerDetailPage() {
                         paginationData={forDiscussionPaginated}
                         currentPage={forDiscussionPage}
                         onPageChange={setForDiscussionPage}
+                        searchQuery={forDiscussionSearch}
+                        onSearchChange={(query) => {
+                          setForDiscussionSearch(query);
+                          setForDiscussionPage(1); // Reset to first page when searching
+                        }}
                       />
                     </div>
                     
@@ -2332,6 +2369,11 @@ export default function SellerDetailPage() {
                         paginationData={toBePeeledPaginated}
                         currentPage={toBePeeledPage}
                         onPageChange={setToBePeeledPage}
+                        searchQuery={toBePeeledSearch}
+                        onSearchChange={(query) => {
+                          setToBePeeledSearch(query);
+                          setToBePeeledPage(1); // Reset to first page when searching
+                        }}
                       />
                     </div>
                   </div>
@@ -2358,6 +2400,13 @@ export default function SellerDetailPage() {
                           setAvailableAccountsPage(1); // Reset to first page when searching
                         }}
                         isExplorationMode={true}
+                        sortBy={availableAccountsSortBy}
+                        sortOrder={availableAccountsSortOrder}
+                        onSortChange={(sortBy, sortOrder) => {
+                          setAvailableAccountsSortBy(sortBy);
+                          setAvailableAccountsSortOrder(sortOrder);
+                          setAvailableAccountsPage(1); // Reset to first page when sorting changes
+                        }}
                       />
                     </div>
                   </div>
@@ -2440,8 +2489,8 @@ const AccountColumn = memo(function AccountColumn({
           </div>
         </div>
         
-        {/* Search input for Available Accounts */}
-        {id === "available" && onSearchChange && (
+        {/* Search input for all columns */}
+        {onSearchChange && (
           <div className="px-4 pb-4">
             <div className="relative">
               <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
@@ -2449,7 +2498,7 @@ const AccountColumn = memo(function AccountColumn({
               </div>
               <Input
                 type="text"
-                placeholder="Search available accounts..."
+                placeholder={`Search ${title.toLowerCase()}...`}
                 value={searchQuery || ''}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => onSearchChange(e.target.value)}
                 className="pl-10 h-9 text-sm border-slate-200 focus:border-blue-400 focus:ring-blue-400 rounded-lg shadow-sm"
@@ -2587,6 +2636,9 @@ const AccountTable = ({
   searchQuery,
   onSearchChange,
   isExplorationMode = false,
+  sortBy,
+  sortOrder,
+  onSortChange,
 }: { 
   id: string;
   title: string;
@@ -2603,6 +2655,9 @@ const AccountTable = ({
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   isExplorationMode?: boolean;
+  sortBy?: 'fit_percentage' | 'name' | 'total_revenue';
+  sortOrder?: 'asc' | 'desc';
+  onSortChange?: (sortBy: 'fit_percentage' | 'name' | 'total_revenue', sortOrder: 'asc' | 'desc') => void;
 }) => {
   // Format revenue helper
   const formatRevenue = (revenue: number) => {
@@ -2682,15 +2737,63 @@ const AccountTable = ({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[200px]">Account</TableHead>
+                  <TableHead className="w-[200px]">
+                    {onSortChange ? (
+                      <button
+                        onClick={() => onSortChange('name', sortBy === 'name' && sortOrder === 'asc' ? 'desc' : 'asc')}
+                        className="flex items-center gap-1 hover:text-blue-600 transition-colors"
+                      >
+                        Account
+                        {sortBy === 'name' ? (
+                          sortOrder === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 opacity-50" />
+                        )}
+                      </button>
+                    ) : (
+                      'Account'
+                    )}
+                  </TableHead>
                   <TableHead className="w-[100px]">Division</TableHead>
-                  <TableHead className="w-[100px]">Revenue</TableHead>
+                  <TableHead className="w-[100px]">
+                    {onSortChange ? (
+                      <button
+                        onClick={() => onSortChange('total_revenue', sortBy === 'total_revenue' && sortOrder === 'desc' ? 'asc' : 'desc')}
+                        className="flex items-center gap-1 hover:text-blue-600 transition-colors"
+                      >
+                        Revenue
+                        {sortBy === 'total_revenue' ? (
+                          sortOrder === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 opacity-50" />
+                        )}
+                      </button>
+                    ) : (
+                      'Revenue'
+                    )}
+                  </TableHead>
                   <TableHead className="w-[100px]">Size</TableHead>
                   <TableHead className="w-[100px]">Type</TableHead>
                   <TableHead className="w-[100px]">Tier</TableHead>
                   <TableHead className="w-[120px]">Location</TableHead>
                   <TableHead className="w-[150px]">Industry</TableHead>
-                  <TableHead className="w-[100px]">Match %</TableHead>
+                  <TableHead className="w-[100px]">
+                    {onSortChange ? (
+                      <button
+                        onClick={() => onSortChange('fit_percentage', sortBy === 'fit_percentage' && sortOrder === 'desc' ? 'asc' : 'desc')}
+                        className="flex items-center gap-1 hover:text-blue-600 transition-colors"
+                      >
+                        Match %
+                        {sortBy === 'fit_percentage' ? (
+                          sortOrder === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 opacity-50" />
+                        )}
+                      </button>
+                    ) : (
+                      'Match %'
+                    )}
+                  </TableHead>
                   <TableHead className="w-[120px]">Assignment</TableHead>
                   <TableHead className="w-[120px]">Status</TableHead>
                 </TableRow>
@@ -3126,8 +3229,26 @@ const AccountCard = memo(function AccountCard({
               )}
             </div>
             
-            {/* Location */}
-            {(account.state || account.country) && (
+            {/* Location and Type in one row - Only for Account Pinning tab */}
+            {!isExplorationMode && ((account.state || account.country) || (account.type && account.tier !== 'Longtail')) && (
+              <div className="flex gap-1">
+                {(account.state || account.country) && (
+                  <div className="flex-1 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md">
+                    <span className="text-xs font-semibold text-slate-600 block">Location</span>
+                    <span className="text-xs font-bold text-slate-800">{account.state || getCountryDisplayName(account.country)}</span>
+                  </div>
+                )}
+                {account.type && account.tier !== 'Longtail' && (
+                  <div className="flex-1 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md">
+                    <span className="text-xs font-semibold text-slate-600 block">Type</span>
+                    <span className="text-xs font-bold text-slate-800 capitalize">{account.type}</span>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Location - Only for Exploration tab */}
+            {isExplorationMode && (account.state || account.country) && (
               <div className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md">
                 <span className="text-xs font-semibold text-slate-600 block">Location</span>
                 <span className="text-xs font-bold text-slate-800">{account.state || getCountryDisplayName(account.country)}</span>

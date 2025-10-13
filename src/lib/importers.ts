@@ -197,6 +197,7 @@ export function validateComprehensiveTemplate(wb: XLSX.WorkBook, mode: 'comprehe
           break;
         case "Manager_Team":
           requiredColumns = ["manager_name", "seller_name"];
+          // is_primary is optional - defaults to true if not provided
           break;
       }
       
@@ -987,6 +988,7 @@ export async function importManagers(file: File, userId?: string) {
 type ManagerTeamRow = {
   manager_name: string;
   seller_name: string;
+  is_primary?: boolean;
 };
 
 export async function importManagerTeam(file: File, userId?: string) {
@@ -1043,7 +1045,7 @@ export async function importManagerTeam(file: File, userId?: string) {
   // Collect missing managers and sellers for reporting
   const missingManagers = new Set<string>();
   const missingSellers = new Set<string>();
-  const updates: Array<{ sellerId: string; managerId: string }> = [];
+  const updates: Array<{ sellerId: string; managerId: string; is_primary?: boolean }> = [];
 
   for (const r of rows) {
     if (!r.manager_name || !r.seller_name) continue;
@@ -1077,7 +1079,7 @@ export async function importManagerTeam(file: File, userId?: string) {
       continue;
     }
 
-    updates.push({ sellerId, managerId });
+    updates.push({ sellerId, managerId, is_primary: r.is_primary });
   }
 
   // Report missing data
@@ -1122,7 +1124,7 @@ export async function importManagerTeam(file: File, userId?: string) {
     const relationshipsToInsert = newRelationships.map(u => ({
       seller_id: u.sellerId,
       manager_id: u.managerId,
-      is_primary: true // First manager is primary
+      is_primary: u.is_primary ?? true // Use Excel value or default to true
     }));
 
     const { error } = await supabase
@@ -1720,6 +1722,7 @@ async function importManagerTeamAdd(rows: ManagerTeamRow[], userId?: string) {
     .map(r => ({
       seller_id: sellerMap.get(r.seller_name),
       manager_id: managerMap.get(r.manager_name),
+      is_primary: r.is_primary ?? true // Use Excel value or default to true
     }))
     .filter(u => u.seller_id && u.manager_id);
 
@@ -1747,7 +1750,7 @@ async function importManagerTeamAdd(rows: ManagerTeamRow[], userId?: string) {
       .insert({
         seller_id: update.seller_id!,
         manager_id: update.manager_id!,
-        is_primary: true // First manager is primary
+        is_primary: update.is_primary ?? true // Use Excel value or default to true
       });
 
     if (error) {
@@ -2259,7 +2262,8 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
       templateData = [
         {
           manager_name: "Jane Manager",
-          seller_name: "John Smith"
+          seller_name: "John Smith",
+          is_primary: true
         }
       ];
       filename = "ManagerTeam_Template.xlsx";
@@ -2299,7 +2303,9 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
     const noteRow = [
       "NOTE: manager_name and seller_name are used for user-friendly imports.",
       "The system automatically maps these names to the corresponding UUIDs in the database.",
-      "Make sure manager and seller names match exactly with existing records."
+      "Make sure manager and seller names match exactly with existing records.",
+      "is_primary column: Set to TRUE for the primary manager, FALSE for secondary managers.",
+      "If not specified, defaults to TRUE (primary manager)."
     ];
     XLSX.utils.sheet_add_aoa(ws, [noteRow], { origin: -1 });
   }
@@ -2432,11 +2438,13 @@ export function downloadComprehensiveTemplate() {
   const managerTeamData = [
     {
       manager_name: "Jane Manager",
-      seller_name: "John Smith"
+      seller_name: "John Smith",
+      is_primary: true
     },
     {
       manager_name: "Mike Director",
-      seller_name: "Sarah Johnson"
+      seller_name: "Sarah Johnson",
+      is_primary: true
     }
   ];
   
@@ -2466,7 +2474,7 @@ export function downloadComprehensiveTemplate() {
     ["• Sellers: seller_name, division, size, hire_date"],
     ["• Managers: manager_name, manager_email"],
     ["• Relationship_Map: account_name, seller_name, status"],
-    ["• Manager_Team: manager_name, seller_name"],
+    ["• Manager_Team: manager_name, seller_name, is_primary (optional)"],
     [""],
     ["VALID VALUES:"],
     ["• size: 'enterprise' or 'midmarket'"],
@@ -2480,6 +2488,7 @@ export function downloadComprehensiveTemplate() {
     ["• Use state codes (e.g., 'CA', 'NY', 'TX') or 'N/A' for no data - see State_Reference tab"],
     ["• Use hire_date in MM/DD/YY format (e.g., '01/15/22') - tenure_months calculated automatically"],
     ["• Use seniority_type: 'junior' or 'senior' - determines revenue targets and account limits"],
+    ["• is_primary: TRUE for primary manager, FALSE for secondary managers (defaults to TRUE if not specified)"],
     ["• Latitude/longitude will be automatically mapped from country/state codes"]
   ];
   

@@ -138,8 +138,20 @@ export async function getUnifiedDashboardData(filters?: {
         return []; // Return empty array if manager not found
       }
       
-      // Filter by the primary manager_id (the manager should only see their own sellers)
-      query = query.eq('manager_id', managerData.id);
+      // Filter by ALL manager relationships (both primary and secondary)
+      // We need to check the seller_managers table for any relationship with this manager
+      const { data: sellerIds, error: sellerIdsError } = await supabase
+        .from('seller_managers')
+        .select('seller_id')
+        .eq('manager_id', managerData.id);
+      
+      if (sellerIdsError || !sellerIds || sellerIds.length === 0) {
+        return []; // Return empty array if no seller relationships found
+      }
+      
+      // Filter sellers by the IDs from seller_managers table
+      const sellerIdList = sellerIds.map(s => s.seller_id);
+      query = query.in('seller_id', sellerIdList);
     }
     if (filters?.division) {
       query = query.eq('division', filters.division as any);

@@ -386,6 +386,7 @@ export async function getAssignedAccountsPaginated(
   status: 'must_keep' | 'for_discussion' | 'to_be_peeled',
   page: number = 1,
   limit: number = 25,
+  search?: string,
   filters?: {
     division?: string;
     size?: string;
@@ -470,6 +471,12 @@ export async function getAssignedAccountsPaginated(
       `)
       .eq('seller_id', sellerId)
       .in('status', getStatusArray(status));
+
+    // Apply search filter
+    if (search && search.trim() !== '') {
+      countQuery = countQuery.ilike('accounts.name', `%${search.trim()}%`);
+      dataQuery = dataQuery.ilike('accounts.name', `%${search.trim()}%`);
+    }
 
     // Apply database-level filters using the !inner join syntax
     if (filters) {
@@ -590,6 +597,7 @@ export async function getOriginalAccountsPaginated(
   sellerId: string,
   page: number = 1,
   limit: number = 25,
+  search?: string,
   filters?: {
     division?: string;
     size?: string;
@@ -671,6 +679,12 @@ export async function getOriginalAccountsPaginated(
         )
       `)
       .eq('seller_id', sellerId);
+
+    // Apply search filter
+    if (search && search.trim() !== '') {
+      countQuery = countQuery.ilike('accounts.name', `%${search.trim()}%`);
+      dataQuery = dataQuery.ilike('accounts.name', `%${search.trim()}%`);
+    }
 
     // Apply database-level filters using the !inner join syntax
     if (filters) {

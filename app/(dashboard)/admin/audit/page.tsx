@@ -23,7 +23,7 @@ import {
 } from '@/lib/audit';
 
 export default function AuditPage() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -32,7 +32,7 @@ export default function AuditPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
-  const isAdmin = user?.user_metadata?.role === 'MASTER' || user?.user_metadata?.role === 'MANAGER';
+  const isAdmin = profile?.role === 'MASTER' || profile?.role === 'MANAGER';
   const ITEMS_PER_PAGE = 20;
 
   // Redirect if not authenticated
