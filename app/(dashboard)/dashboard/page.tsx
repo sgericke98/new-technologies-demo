@@ -28,6 +28,7 @@ import {
   getMasterDashboardData
 } from "@/lib/unified-dashboard-query";
 import { getManagerPerformance } from "@/lib/optimized-queries";
+import { useRealtimeDashboard } from "@/hooks/use-realtime-dashboard";
 
 // Professional Multi-Select Dropdown Component
 interface MultiSelectDropdownProps {
@@ -158,6 +159,9 @@ export default function DashboardPage() {
   const queryClient = useQueryClient();
   const { logEvent } = useAudit();
   const router = useRouter();
+
+  // Enable real-time updates - listens for changes across all users and tabs
+  useRealtimeDashboard();
 
   // Redirect if not authenticated
   useEffect(() => {

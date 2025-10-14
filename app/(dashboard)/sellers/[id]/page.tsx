@@ -11,6 +11,7 @@ import React, { useEffect, useState, memo, useMemo, Suspense, lazy, useCallback 
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { useRealtimeSeller } from "@/hooks/use-realtime-seller";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn, getCountryDisplayName } from "@/lib/utils";
@@ -110,6 +111,10 @@ export default function SellerDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { logPin, logUnpin, logEvent, logAssign, logUnassign, logUpdate } = useAudit();
+  
+  // Enable real-time updates for this seller - syncs across tabs and users
+  useRealtimeSeller(id);
+  
   const [authorized, setAuthorized] = useState(false);
   const [checking, setChecking] = useState(true);
   const [seller, setSeller] = useState<Seller | null>(null);
