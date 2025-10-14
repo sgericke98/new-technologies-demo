@@ -27,14 +27,9 @@ import { SellerChat } from "@/components/seller/SellerChat";
 import { 
   getSellerDetailData, 
   getSellerRevenue, 
-  getAvailableAccountsWithFit,
-  getAvailableAccountsWithFitPaginated,
   getAllAccountsWithAssignmentStatus, // NEW: Unified approach
   getAssignedAccountsPaginated,
   getOriginalAccountsPaginated,
-  updateAccountStatus,
-  assignAccountToSeller,
-  unassignAccountFromSeller,
   getAccountFilterOptions,
   type SellerDetailData,
   type AccountWithAssignment // NEW: Type for unified accounts
@@ -772,20 +767,7 @@ export default function SellerDetailPage() {
     enabled: !!id && authorized,
   });
 
-  // Legacy query for backward compatibility (will be removed)
-  const { data: availableAccountsWithFitPaginated } = useQuery({
-    queryKey: ["availableAccountsWithFitPaginated", id, availableAccountsPage, availableAccountsSearch, availableAccountsSortBy, availableAccountsSortOrder, availableAccountsLimit, filters.division, filters.size, filters.tier, filters.industry, filters.country, filters.state],
-    queryFn: () => getAvailableAccountsWithFitPaginated(
-      id!,
-      availableAccountsPage,
-      availableAccountsLimit,
-      availableAccountsSearch || undefined,
-      availableAccountsSortBy,
-      availableAccountsSortOrder,
-      filters
-    ),
-    enabled: false, // DISABLED - using new unified approach
-  });
+  // Removed: Legacy availableAccountsWithFitPaginated query - replaced by allAccountsWithAssignmentStatus
 
 
   // OPTIMIZED: Query for must keep accounts (paginated) - WITH FILTERS AND SEARCH APPLIED

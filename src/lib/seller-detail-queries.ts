@@ -105,7 +105,8 @@ export interface SellerDetailData {
   // NEW: All accounts with assignment status
   allAccounts: AccountWithAssignment[];
   
-  // Legacy fields for backward compatibility
+  // DEPRECATED: Legacy fields for backward compatibility
+  // Use allAccounts instead - these will be removed in future versions
   availableAccounts: Array<{
     id: string;
     name: string;
@@ -130,6 +131,7 @@ export interface SellerDetailData {
     isOriginal: false;
   }>;
   
+  // DEPRECATED: Use allAccounts with assignment_status filter instead
   restrictedAccounts: Array<{
     id: string;
     name: string;
@@ -258,8 +260,8 @@ export async function getSellerDetailData(sellerId: string): Promise<SellerDetai
       isOriginal: false as const,
     }));
 
-    // Note: Available accounts are now fetched separately using getAvailableAccountsWithFit()
-    // This provides better performance and seller-specific fit calculations
+    // Note: Available accounts are now provided through allAccounts with assignment_status filtering
+    // The legacy availableAccounts field is set to empty array for backward compatibility
 
     // Process restricted accounts
     const restrictedAccounts = restrictedAccountsData.map((item: any) => ({
@@ -302,8 +304,8 @@ export async function getSellerDetailData(sellerId: string): Promise<SellerDetai
       originalAccounts,
       assignedAccounts,
       allAccounts: allAccountsResult.accounts, // NEW: All accounts with assignment status
-      availableAccounts: [], // Legacy - now derived from allAccounts
-      restrictedAccounts,
+      availableAccounts: [], // DEPRECATED: Legacy field - use allAccounts instead
+      restrictedAccounts, // DEPRECATED: Use allAccounts with assignment_status filter instead
       totalRevenue,
     };
   } catch (error) {
@@ -311,72 +313,7 @@ export async function getSellerDetailData(sellerId: string): Promise<SellerDetai
   }
 }
 
-/**
- * Get available accounts with fit percentage for a specific seller (paginated)
- * This now uses the optimized server-side function with fit calculation and pagination
- * @deprecated Use getAvailableAccountsWithFit instead for better performance
- */
-export async function getAvailableAccountsWithFitPaginated(
-  sellerId: string,
-  page: number = 1,
-  limit: number = 50,
-  search?: string,
-  sortBy: 'fit_percentage' | 'name' | 'total_revenue' = 'fit_percentage',
-  sortOrder: 'asc' | 'desc' = 'desc',
-  filters?: {
-    division?: string;
-    size?: string;
-    tier?: string;
-    industry?: string;
-    country?: string;
-    state?: string;
-  }
-): Promise<{
-  accounts: Array<{
-    id: string;
-    name: string;
-    city: string | null;
-    state: string | null;
-    country: string | null;
-    industry: string | null;
-    size: string | null;
-    tier: string | null;
-    type: string | null;
-    current_division: string;
-    lat: number | null;
-    lng: number | null;
-    total_revenue: number;
-    revenue_breakdown: {
-      esg: number;
-      gdt: number;
-      gvc: number;
-      msg_us: number;
-    };
-    fitPercentage: number;
-    isOriginal: false;
-  }>;
-  totalCount: number;
-  totalPages: number;
-  currentPage: number;
-}> {
-  // Use the new optimized function
-  const result = await getAvailableAccountsWithFit(
-    sellerId,
-    page,
-    limit,
-    search,
-    sortBy,
-    sortOrder,
-    filters
-  );
-
-  return {
-    accounts: result.accounts,
-    totalCount: result.totalCount,
-    totalPages: result.totalPages,
-    currentPage: result.currentPage,
-  };
-}
+// Removed: getAvailableAccountsWithFitPaginated - Deprecated and replaced by getAllAccountsWithAssignmentStatus
 
 /**
  * Get assigned accounts with pagination for a specific seller and status
@@ -910,144 +847,7 @@ export async function getAllAccountsWithAssignmentStatus(
   }
 }
 
-/**
- * Get available accounts with fit percentage for a specific seller (paginated with server-side filtering)
- * This uses the optimized function with fit calculation, filtering, and pagination
- * @deprecated Use getAllAccountsWithAssignmentStatus instead for better performance and UX
- */
-export async function getAvailableAccountsWithFit(
-  sellerId: string,
-  page: number = 1,
-  limit: number = 50,
-  search?: string,
-  sortBy: 'fit_percentage' | 'name' | 'total_revenue' = 'fit_percentage',
-  sortOrder: 'asc' | 'desc' = 'desc',
-  filters?: {
-    division?: string;
-    size?: string;
-    tier?: string;
-    industry?: string;
-    country?: string;
-    state?: string;
-  }
-): Promise<{
-  accounts: Array<{
-    id: string;
-    name: string;
-    city: string | null;
-    state: string | null;
-    country: string | null;
-    industry: string | null;
-    size: string | null;
-    tier: string | null;
-    type: string | null;
-    current_division: string;
-    lat: number | null;
-    lng: number | null;
-    total_revenue: number;
-    revenue_breakdown: {
-      esg: number;
-      gdt: number;
-      gvc: number;
-      msg_us: number;
-    };
-    fitPercentage: number;
-    isOriginal: false;
-  }>;
-  totalCount: number;
-  totalPages: number;
-  currentPage: number;
-  limit: number;
-}> {
-  try {
-    const { data, error } = await (supabase as any)
-      .rpc('get_available_accounts_with_fit_paginated', {
-        seller_id_param: sellerId,
-        page_param: page,
-        limit_param: limit,
-        search_param: search || null,
-        sort_by_param: sortBy,
-        sort_order_param: sortOrder,
-        division_filter: filters?.division || null,
-        size_filter: filters?.size || null,
-        tier_filter: filters?.tier || null,
-        industry_filter: filters?.industry || null,
-        country_filter: filters?.country || null,
-        state_filter: filters?.state || null,
-      });
-
-    if (error) throw error;
-
-    // The function now returns a table, so we get an array of rows
-    const rows = data as Array<{
-      id: string;
-      name: string;
-      city: string | null;
-      state: string | null;
-      country: string | null;
-      industry: string | null;
-      size: string;
-      tier: string | null;
-      type: string | null;
-      current_division: string;
-      lat: number | null;
-      lng: number | null;
-      total_revenue: number;
-      revenue_esg: number;
-      revenue_gdt: number;
-      revenue_gvc: number;
-      revenue_msg_us: number;
-      fit_percentage: number;
-      total_count: number;
-      total_pages: number;
-      current_page: number;
-      limit_per_page: number;
-    }>;
-
-    // Get pagination info from the first row (all rows have the same pagination info)
-    const firstRow = rows[0];
-    const paginationInfo = firstRow ? {
-      totalCount: firstRow.total_count,
-      totalPages: firstRow.total_pages,
-      currentPage: firstRow.current_page,
-      limit: firstRow.limit_per_page,
-    } : {
-      totalCount: 0,
-      totalPages: 0,
-      currentPage: page,
-      limit: limit,
-    };
-
-    return {
-      accounts: (rows || []).map((item) => ({
-        id: item.id,
-        name: item.name,
-        city: item.city,
-        state: item.state,
-        country: item.country,
-        industry: item.industry,
-        size: item.size,
-        tier: item.tier,
-        type: item.type,
-        current_division: item.current_division,
-        lat: item.lat,
-        lng: item.lng,
-        total_revenue: item.total_revenue,
-        revenue_breakdown: {
-          esg: item.revenue_esg || 0,
-          gdt: item.revenue_gdt || 0,
-          gvc: item.revenue_gvc || 0,
-          msg_us: item.revenue_msg_us || 0,
-        },
-        fitPercentage: item.fit_percentage,
-        isOriginal: false as const,
-      })),
-      ...paginationInfo,
-    };
-  } catch (error) {
-    throw error;
-  }
-}
+// Removed: getAvailableAccountsWithFit - Deprecated and replaced by getAllAccountsWithAssignmentStatus
 
 /**
  * Get seller revenue total (optimized query)
