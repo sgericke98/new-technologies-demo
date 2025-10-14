@@ -1159,21 +1159,17 @@ export async function getAccountFilterOptions(): Promise<{
 }> {
   try {
     // Get all accounts with all their data in one query
+    // Don't filter out null values in the query - we'll filter them when building the unique sets
+    // This ensures we get all possible values even if some accounts have incomplete data
     const { data: allAccounts, error } = await supabase
       .from('accounts')
-      .select('current_division, size, tier, industry, country, state')
-      .not('current_division', 'is', null)
-      .not('size', 'is', null)
-      .not('tier', 'is', null)
-      .not('industry', 'is', null)
-      .not('country', 'is', null)
-      .not('state', 'is', null);
+      .select('current_division, size, tier, industry, country, state');
 
     if (error) {
       throw error;
     }
 
-    // Extract unique values from all accounts
+    // Extract unique values from all accounts, filtering out null/undefined values
     const divisions = Array.from(new Set(
       allAccounts?.map(a => a.current_division).filter(Boolean) || []
     )).sort() as string[];

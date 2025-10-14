@@ -27,7 +27,6 @@ export function useRealtimeSettings(onSettingsChanged?: () => void) {
           table: 'revenue_range_settings',
         },
         async (payload) => {
-          console.log('🔄 Realtime: Revenue range settings changed', payload);
           
           // Refresh materialized views since health indicators depend on these settings
           try {
@@ -72,7 +71,6 @@ export function useRealtimeSettings(onSettingsChanged?: () => void) {
           table: 'account_number_settings',
         },
         async (payload) => {
-          console.log('🔄 Realtime: Account number settings changed', payload);
           
           // Refresh materialized views since health indicators depend on these settings
           try {
@@ -108,7 +106,6 @@ export function useRealtimeSettings(onSettingsChanged?: () => void) {
 
     // Cleanup function - unsubscribe from all channels when component unmounts
     return () => {
-      console.log('🔌 Disconnecting settings realtime subscriptions');
       channels.forEach((channel) => {
         supabase.removeChannel(channel);
       });
