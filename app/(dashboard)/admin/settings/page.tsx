@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -30,6 +30,7 @@ import {
   exportCompleteAccountsWithAssignedSellers,
 } from '@/lib/importers';
 import { PageLoader } from '@/components/ui/loader';
+import { useRealtimeSettings } from '@/hooks/use-realtime-settings';
 
 interface RevenueRangeSettings {
   id?: string;
@@ -149,23 +150,8 @@ export default function AdminSettingsPage() {
   const sellersInputRef = useRef<HTMLInputElement>(null);
   const accountsInputRef = useRef<HTMLInputElement>(null);
 
-  // Redirect non-MASTER users to dashboard
-  useEffect(() => {
-    if (!authLoading && (!user || !profile || profile.role !== 'MASTER')) {
-      router.push('/dashboard');
-    }
-  }, [user, profile, authLoading, router]);
-
-  // Check if user is MASTER admin
-  const isMasterAdmin = profile?.role === 'MASTER';
-
-  useEffect(() => {
-    if (isMasterAdmin) {
-      fetchSettings();
-    }
-  }, [isMasterAdmin]);
-
-  const fetchSettings = async () => {
+  // Fetch settings from database - wrapped in useCallback for real-time hook
+  const fetchSettings = useCallback(async () => {
     try {
       // Fetch revenue range settings
       const { data: revenueRangeData, error: revenueRangeError } = await supabase
@@ -285,7 +271,26 @@ export default function AdminSettingsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Enable real-time updates for settings - syncs across all admin users
+  useRealtimeSettings(fetchSettings);
+
+  // Redirect non-MASTER users to dashboard
+  useEffect(() => {
+    if (!authLoading && (!user || !profile || profile.role !== 'MASTER')) {
+      router.push('/dashboard');
+    }
+  }, [user, profile, authLoading, router]);
+
+  // Check if user is MASTER admin
+  const isMasterAdmin = profile?.role === 'MASTER';
+
+  useEffect(() => {
+    if (isMasterAdmin) {
+      fetchSettings();
+    }
+  }, [isMasterAdmin, fetchSettings]);
 
   const handleSave = async () => {
     if (!isMasterAdmin) {
