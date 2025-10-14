@@ -1800,19 +1800,17 @@ export default function SellerDetailPage() {
 
 
                     {/* Industry Specialty */}
-                    {seller.industry_specialty && seller.industry_specialty !== "-" && (
-                      <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-amber-200 col-span-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="p-1 bg-amber-100 rounded-md">
-                            <Building2 className="h-3.5 w-3.5 text-amber-600" />
-                          </div>
-                          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Industry Focus</span>
+                    <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-amber-200 col-span-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="p-1 bg-amber-100 rounded-md">
+                          <Building2 className="h-3.5 w-3.5 text-amber-600" />
                         </div>
-                        <span className="text-sm font-bold text-slate-900 truncate block" title={seller.industry_specialty}>
-                          {seller.industry_specialty}
-                        </span>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Industry Focus</span>
                       </div>
-                    )}
+                      <span className="text-sm font-bold text-slate-900 truncate block" title={seller.industry_specialty || "Not specified"}>
+                        {seller.industry_specialty && seller.industry_specialty !== "-" ? seller.industry_specialty : "Not specified"}
+                      </span>
+                    </div>
                   </div>
                 </div>
 

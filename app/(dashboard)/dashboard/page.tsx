@@ -866,7 +866,7 @@ export default function DashboardPage() {
                               </div>
                             )}
                             {/* Yellow Flag - industry mismatch - below red flag */}
-                            {seller.hasIndustryMismatch && (
+                            {seller.hasIndustryMismatch && seller.industry_specialty && seller.industry_specialty !== "-" && (
                               <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
                                 <span>⚠️</span>
                                 <span>{seller.industryMismatchedAccountCount} account(s) with industry mismatch</span>
@@ -1030,7 +1030,7 @@ export default function DashboardPage() {
                               </div>
                             )}
                             {/* Yellow Flag - industry mismatch - below red flag */}
-                            {seller.hasIndustryMismatch && (
+                            {seller.hasIndustryMismatch && seller.industry_specialty && seller.industry_specialty !== "-" && (
                               <div className="flex items-center gap-1 text-yellow-700 font-bold text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200 w-fit">
                                 <span>⚠️</span>
                                 <span>{seller.industryMismatchedAccountCount} account(s) with industry mismatch</span>
