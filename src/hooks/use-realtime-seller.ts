@@ -29,8 +29,15 @@ export function useRealtimeSeller(sellerId: string) {
           table: 'sellers',
           filter: `id=eq.${sellerId}`,
         },
-        (payload) => {
+        async (payload) => {
           console.log(`🔄 Realtime: Seller ${sellerId} updated`, payload);
+          
+          // Refresh materialized views to sync with real data
+          try {
+            await supabase.rpc('refresh_performance_views');
+          } catch (error) {
+            console.error('Error refreshing materialized views:', error);
+          }
           
           // Throttle toast notifications (max once every 3 seconds)
           const now = Date.now();
@@ -66,8 +73,15 @@ export function useRealtimeSeller(sellerId: string) {
           table: 'relationship_maps',
           filter: `seller_id=eq.${sellerId}`,
         },
-        (payload) => {
+        async (payload) => {
           console.log(`🔄 Realtime: Seller ${sellerId} relationships updated`, payload);
+          
+          // Refresh materialized views to sync with real data
+          try {
+            await supabase.rpc('refresh_performance_views');
+          } catch (error) {
+            console.error('Error refreshing materialized views:', error);
+          }
           
           // Throttle toast notifications (max once every 3 seconds)
           const now = Date.now();

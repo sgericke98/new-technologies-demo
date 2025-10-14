@@ -27,8 +27,15 @@ export function useRealtimeDashboard() {
           schema: 'public',
           table: 'sellers',
         },
-        (payload) => {
+        async (payload) => {
           console.log('🔄 Realtime: Seller changed', payload);
+          
+          // Refresh materialized views to sync with real data
+          try {
+            await supabase.rpc('refresh_performance_views');
+          } catch (error) {
+            console.error('Error refreshing materialized views:', error);
+          }
           
           // Throttle toast notifications to avoid spam (max once every 3 seconds)
           const now = Date.now();
@@ -66,8 +73,15 @@ export function useRealtimeDashboard() {
           schema: 'public',
           table: 'relationship_maps',
         },
-        (payload) => {
+        async (payload) => {
           console.log('🔄 Realtime: Relationship changed', payload);
+          
+          // Refresh materialized views to sync with real data
+          try {
+            await supabase.rpc('refresh_performance_views');
+          } catch (error) {
+            console.error('Error refreshing materialized views:', error);
+          }
           
           // Throttle toast notifications to avoid spam (max once every 3 seconds)
           const now = Date.now();
