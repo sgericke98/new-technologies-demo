@@ -642,26 +642,17 @@ export async function importSellers(file: File, userId?: string) {
 type RelRow = {
   account_name: string;
   seller_name: string;
-  status: "approval for pinning" | "pinned" | "approval for assigning" | "assigned" | "up for debate" | "peeled" | "available" | "must keep" | "for discussion" | "to be peeled" | "approval_for_pinning" | "approval_for_assigning" | "up_for_debate" | "must_keep" | "for_discussion" | "to_be_peeled";
+  status: "original" | "must keep" | "for discussion" | "to be peeled";
 };
 
+// Status map for relationship_maps table (original is handled separately)
 const statusMap: Record<string, string> = {
-  // User-friendly names (with spaces)
-  "approval for pinning": "approval_for_pinning",
-  "pinned": "pinned",
-  "approval for assigning": "approval_for_assigning",
-  "assigned": "assigned",
-  "up for debate": "up_for_debate",
-  "peeled": "peeled",
-  "available": "available",
+  // Primary statuses (user-friendly names with spaces)
   "must keep": "must_keep",
   "for discussion": "for_discussion",
   "to be peeled": "to_be_peeled",
   
   // Database enum values (underscore format)
-  "approval_for_pinning": "approval_for_pinning",
-  "approval_for_assigning": "approval_for_assigning",
-  "up_for_debate": "up_for_debate",
   "must_keep": "must_keep",
   "for_discussion": "for_discussion",
   "to_be_peeled": "to_be_peeled",
@@ -734,8 +725,8 @@ export async function importRelationshipMap(file: File, userId?: string) {
   if (cannonAccount) {
   }
 
-  // Prepare relationship data
-  const relationshipsToUpsert = rows
+  // Prepare relationship data - separate original from active relationships
+  const allRelationships = rows
     .filter(r => r.account_name && r.seller_name)
     .map(r => {
       // Try exact match first
@@ -799,69 +790,82 @@ export async function importRelationshipMap(file: File, userId?: string) {
         return null;
       }
 
-      const mappedStatus = statusMap[r.status];
-      if (!mappedStatus) {
-        throw new Error(`Invalid status: ${r.status}`);
+      const isOriginal = r.status.toLowerCase() === "original";
+      
+      // Validate status for non-original relationships
+      if (!isOriginal) {
+        const mappedStatus = statusMap[r.status];
+        if (!mappedStatus) {
+          throw new Error(`Invalid status: ${r.status}. Valid options are: original, must_keep, for_discussion, to_be_peeled`);
+        }
       }
 
       return {
         account_id: accountId,
         seller_id: sellerId,
-        status: mappedStatus as any,
+        status: isOriginal ? null : statusMap[r.status] as any,
+        is_original: isOriginal,
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
-  
-  // Debug: Check if any relationships have invalid status
-  const invalidStatuses = relationshipsToUpsert.filter(r => !r.status);
-  if (invalidStatuses.length > 0) {
-  }
+  // Split into two groups: original and active relationships
+  const originalRelationships = allRelationships.filter(r => r.is_original);
+  const relationshipsToUpsert = allRelationships.filter(r => !r.is_original && r.status);
 
-  // Batch upsert relationships
-  const relationshipChunks = chunk(relationshipsToUpsert, BATCH_SIZE);
+  // Batch upsert active relationships (those with status, NOT marked as original)
+  if (relationshipsToUpsert.length > 0) {
+    const relationshipChunks = chunk(
+      relationshipsToUpsert.map(({ account_id, seller_id, status }) => ({
+        account_id,
+        seller_id,
+        status
+      })),
+      BATCH_SIZE
+    );
 
-  for (let i = 0; i < relationshipChunks.length; i++) {
-    const { error } = await supabase
-      .from("relationship_maps")
-      .upsert(relationshipChunks[i], { 
-        onConflict: "account_id,seller_id",
-        ignoreDuplicates: false 
-      });
+    for (let i = 0; i < relationshipChunks.length; i++) {
+      const { error } = await supabase
+        .from("relationship_maps")
+        .upsert(relationshipChunks[i], { 
+          onConflict: "account_id,seller_id",
+          ignoreDuplicates: false 
+        });
 
-    if (error) {
-      throw new Error(`Failed to upsert relationships batch ${i + 1}: ${error.message}`);
+      if (error) {
+        throw new Error(`Failed to upsert relationships batch ${i + 1}: ${error.message}`);
+      }
     }
   }
 
+  // Create snapshot for original_relationships table - ONLY for relationships marked as "original"
+  if (originalRelationships.length > 0) {
+    const snapshotRows = originalRelationships.map(({ account_id, seller_id }) => ({
+      account_id,
+      seller_id,
+    }));
+
+    const snapshotChunks = chunk(snapshotRows, BATCH_SIZE);
+
+    for (let i = 0; i < snapshotChunks.length; i++) {
+      const { error } = await supabase
+        .from("original_relationships")
+        .upsert(snapshotChunks[i], { 
+          onConflict: "account_id,seller_id",
+          ignoreDuplicates: false 
+        });
+
+      if (error) {
+        throw new Error(`Failed to create original snapshot batch ${i + 1}: ${error.message}`);
+      }
+    }
+  }
 
   // Refresh materialized views to update dashboard data
   try {
     await supabase.rpc('refresh_performance_views');
   } catch (refreshError) {
     // Don't fail the import if refresh fails
-  }
-
-  // Create snapshot for original_relationships table
-  
-  const snapshotRows = relationshipsToUpsert.map(({ account_id, seller_id }) => ({
-    account_id,
-    seller_id,
-  }));
-
-  const snapshotChunks = chunk(snapshotRows, BATCH_SIZE);
-
-  for (let i = 0; i < snapshotChunks.length; i++) {
-    const { error } = await supabase
-      .from("original_relationships")
-      .upsert(snapshotChunks[i], { 
-        onConflict: "account_id,seller_id",
-        ignoreDuplicates: false 
-      });
-
-    if (error) {
-      throw new Error(`Failed to create original snapshot batch ${i + 1}: ${error.message}`);
-    }
   }
 
 
@@ -876,9 +880,9 @@ export async function importRelationshipMap(file: File, userId?: string) {
       {
         import_type: 'relationship_map',
         records_count: relationshipsToUpsert.length,
+        original_count: originalRelationships.length,
         file_name: file.name,
         file_size: file.size,
-        snapshot_count: snapshotRows.length,
       }
     );
     
@@ -1644,37 +1648,89 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
   const accountMap = new Map(accounts.map(a => [a.name, a.id]));
   const sellerMap = new Map(sellers.map(s => [s.name, s.id]));
 
-  const relationshipsToInsert = rows
+  // Map relationships - separate original from active relationships
+  const allRelationships = rows
     .filter(r => r.account_name && r.seller_name)
-    .map(r => ({
-      account_id: accountMap.get(r.account_name),
-      seller_id: sellerMap.get(r.seller_name),
-      status: r.status || "must_keep",
-    }))
-    .filter(r => r.account_id && r.seller_id)
-    .map(r => ({
-      account_id: r.account_id!,
-      seller_id: r.seller_id!,
-      status: r.status as any,
-    }));
+    .map(r => {
+      const accountId = accountMap.get(r.account_name);
+      const sellerId = sellerMap.get(r.seller_name);
+      
+      if (!accountId || !sellerId) {
+        return null;
+      }
 
+      const isOriginal = (r.status || "").toLowerCase() === "original";
+      
+      // Validate status for non-original relationships
+      if (!isOriginal) {
+        const mappedStatus = statusMap[r.status || "must_keep"];
+        if (!mappedStatus) {
+          throw new Error(`Invalid status: ${r.status}. Valid options are: original, must_keep, for_discussion, to_be_peeled`);
+        }
+      }
 
-  const relChunks = chunk(relationshipsToInsert, BATCH_SIZE);
+      return {
+        account_id: accountId,
+        seller_id: sellerId,
+        status: isOriginal ? null : statusMap[r.status || "must_keep"] as any,
+        is_original: isOriginal,
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null);
+
+  // Split into two groups: original and active relationships
+  const originalRelationships = allRelationships.filter(r => r.is_original);
+  const relationshipsToInsert = allRelationships.filter(r => !r.is_original && r.status);
+
+  // Insert active relationships (exclude is_original field from database insert)
   let imported = 0;
   const errors: any[] = [];
 
-  for (let i = 0; i < relChunks.length; i++) {
-    const { error } = await supabase
-      .from("relationship_maps")
-      .insert(relChunks[i]);
+  if (relationshipsToInsert.length > 0) {
+    const relChunks = chunk(
+      relationshipsToInsert.map(({ account_id, seller_id, status }) => ({
+        account_id,
+        seller_id,
+        status
+      })),
+      BATCH_SIZE
+    );
 
-    if (error) {
-      errors.push({ batch: i + 1, error });
-    } else {
-      imported += relChunks[i].length;
+    for (let i = 0; i < relChunks.length; i++) {
+      const { error } = await supabase
+        .from("relationship_maps")
+        .insert(relChunks[i]);
+
+      if (error) {
+        errors.push({ batch: i + 1, error });
+      } else {
+        imported += relChunks[i].length;
+      }
     }
   }
 
+  // Add to original_relationships table - ONLY for relationships marked as "original"
+  if (originalRelationships.length > 0) {
+    const snapshotRows = originalRelationships.map(({ account_id, seller_id }) => ({
+      account_id,
+      seller_id,
+    }));
+
+    const snapshotChunks = chunk(snapshotRows, BATCH_SIZE);
+
+    for (let i = 0; i < snapshotChunks.length; i++) {
+      const { error } = await supabase
+        .from("original_relationships")
+        .upsert(snapshotChunks[i], { 
+          onConflict: "account_id,seller_id",
+          ignoreDuplicates: false 
+        });
+
+      if (error) {
+        errors.push({ batch: i + 1, error: `Failed to add original relationships: ${error.message}` });
+      }
+    }
+  }
 
   // Log audit event
   if (userId) {
@@ -1687,6 +1743,7 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
       {
         import_type: 'relationships_add',
         records_count: imported,
+        original_relationships_count: originalRelationships.length,
         operation: 'insert',
       }
     );
@@ -2251,7 +2308,22 @@ export function downloadTemplate(type: "accounts" | "sellers" | "managers" | "re
         {
           account_name: "Example Corp",
           seller_name: "John Smith",
-          status: "assigned"
+          status: "original"
+        },
+        {
+          account_name: "Tech Solutions Inc",
+          seller_name: "John Smith",
+          status: "must_keep"
+        },
+        {
+          account_name: "Innovation LLC",
+          seller_name: "Sarah Johnson",
+          status: "for_discussion"
+        },
+        {
+          account_name: "Future Systems",
+          seller_name: "Sarah Johnson",
+          status: "to_be_peeled"
         }
       ];
       filename = "RelationshipMap_Template.xlsx";
@@ -2422,12 +2494,22 @@ export function downloadComprehensiveTemplate() {
     {
       account_name: "Example Corp",
       seller_name: "John Smith",
-      status: "assigned"
+      status: "original"
     },
     {
       account_name: "Tech Solutions Inc",
       seller_name: "Sarah Johnson",
-      status: "pinned"
+      status: "must_keep"
+    },
+    {
+      account_name: "Innovation Systems",
+      seller_name: "John Smith",
+      status: "for_discussion"
+    },
+    {
+      account_name: "Future Tech",
+      seller_name: "Sarah Johnson",
+      status: "to_be_peeled"
     }
   ];
   
@@ -2479,7 +2561,11 @@ export function downloadComprehensiveTemplate() {
     ["VALID VALUES:"],
     ["• size: 'enterprise' or 'midmarket'"],
     ["• division/current_division: 'ESG', 'GDT', 'GVC', 'MSG_US'"],
-    ["• status: 'approval_for_pinning', 'pinned', 'approval_for_assigning', 'assigned', 'up_for_debate', 'peeled', 'available', 'must_keep', 'for_discussion', 'to_be_peeled'"],
+    ["• status: 'original', 'must_keep', 'for_discussion', 'to_be_peeled'"],
+    ["  - 'original': Baseline assignment stored ONLY in original_relationships (not in relationship_maps) - read-only in UI"],
+    ["  - 'must_keep': Account must remain with this seller - stored in relationship_maps"],
+    ["  - 'for_discussion': Account assignment needs to be discussed - stored in relationship_maps"],
+    ["  - 'to_be_peeled': Account should be reassigned to another seller - stored in relationship_maps"],
     [""],
     ["IMPORTANT NOTES:"],
     ["• Manager emails must match existing user profiles"],

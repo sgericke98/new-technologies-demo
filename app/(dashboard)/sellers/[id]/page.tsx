@@ -1261,7 +1261,7 @@ export default function SellerDetailPage() {
     }
   }, [seller, profile, id, toast, logUpdate, logAssign, queryClient, originalPaginated, mustKeepPaginated, forDiscussionPaginated, toBePeeledPaginated, allAccountsWithAssignmentStatus]);
 
-  // Reset pagination when filters change - ONLY for Available accounts
+  // Reset pagination when filters change - applies to all accounts
   useEffect(() => {
     setAvailableAccountsPage(1);
   }, [filters]);
@@ -1800,7 +1800,7 @@ export default function SellerDetailPage() {
 
 
                     {/* Industry Specialty */}
-                    {seller.industry_specialty && (
+                    {seller.industry_specialty && seller.industry_specialty !== "-" && (
                       <div className="group bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-slate-200/60 shadow-sm hover:shadow-md transition-all duration-200 hover:border-amber-200 col-span-2">
                         <div className="flex items-center gap-2 mb-1">
                           <div className="p-1 bg-amber-100 rounded-md">
@@ -1906,7 +1906,10 @@ export default function SellerDetailPage() {
         {/* Professional Revenue Analysis with Charts */}
         {seller && (
           <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 border border-slate-200 shadow-lg mb-8">
-            <h2 className="text-xl font-semibold text-slate-900 mb-6">Revenue Analysis</h2>
+            <div className="mb-6">
+              <h2 className="text-xl font-semibold text-slate-900">Revenue Analysis</h2>
+              <p className="text-sm text-slate-600 mt-1">Analysis based on accounts with "Must Keep" status only</p>
+            </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Revenue by Division - Pie Chart */}
@@ -2082,8 +2085,8 @@ export default function SellerDetailPage() {
                 <div className="p-1.5 bg-blue-100 rounded-lg">
                   <Target className="h-4 w-4 text-blue-600" />
                 </div>
-                <h3 className="text-sm font-semibold text-slate-900">Filter Available Accounts</h3>
-                <p className="text-xs text-slate-600 mt-1">Filters only apply to the Available accounts column</p>
+                <h3 className="text-sm font-semibold text-slate-900">Filter All Accounts</h3>
+                <p className="text-xs text-slate-600 mt-1">Filters apply to all account columns</p>
               </div>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
