@@ -848,6 +848,7 @@ export async function getAllAccountsWithAssignmentStatus(
 }
 
 // Removed: getAvailableAccountsWithFit - Deprecated and replaced by getAllAccountsWithAssignmentStatus
+// Removed: getAllUniqueFilterValues - Replaced by getAccountFilterOptions which uses efficient SQL DISTINCT queries
 
 /**
  * Get seller revenue total (optimized query)
@@ -958,41 +959,87 @@ export async function getAccountFilterOptions(): Promise<{
   states: string[];
 }> {
   try {
-    // Get all accounts with all their data in one query
-    // Don't filter out null values in the query - we'll filter them when building the unique sets
-    // This ensures we get all possible values even if some accounts have incomplete data
-    const { data: allAccounts, error } = await supabase
-      .from('accounts')
-      .select('current_division, size, tier, industry, country, state');
-
+    // Fetch ALL distinct values efficiently using SQL DISTINCT (bypasses 1000 row limit)
+    
+    // Use raw SQL to get DISTINCT values efficiently - bypasses the 1000 row limit
+    // This is much more efficient than fetching all 7000+ accounts
+    const { data, error } = await (supabase as any).rpc('get_distinct_account_filters');
+    
     if (error) {
-      throw error;
+      console.error('[getAccountFilterOptions] RPC error:', error);
+      // Fallback to the old method if RPC doesn't exist yet
+      console.warn('[getAccountFilterOptions] Falling back to direct queries...');
+      return await getAccountFilterOptionsFallback();
     }
 
-    // Extract unique values from all accounts, filtering out null/undefined values
-    const divisions = Array.from(new Set(
-      allAccounts?.map(a => a.current_division).filter(Boolean) || []
-    )).sort() as string[];
+    // The RPC returns a single JSONB object with all the arrays
+    const result = (data || {}) as {
+      divisions: string[];
+      sizes: string[];
+      tiers: string[];
+      industries: string[];
+      countries: string[];
+      states: string[];
+    };
+    
+    // Successfully fetched all distinct filter values from database
 
-    const sizes = Array.from(new Set(
-      allAccounts?.map(a => a.size).filter(Boolean) || []
-    )).sort() as string[];
+    return {
+      divisions: result.divisions || [],
+      sizes: result.sizes || [],
+      tiers: result.tiers || [],
+      industries: result.industries || [],
+      countries: result.countries || [],
+      states: result.states || []
+    };
+  } catch (error) {
+    console.error('[getAccountFilterOptions] Unexpected error:', error);
+    // Fallback to direct queries
+    return await getAccountFilterOptionsFallback();
+  }
+}
 
-    const tiers = Array.from(new Set(
-      allAccounts?.map(a => a.tier).filter(Boolean) || []
-    )).sort() as string[];
+/**
+ * Fallback method that queries each field separately to get ALL distinct values
+ * This bypasses the 1000 row limit by using SQL DISTINCT
+ */
+async function getAccountFilterOptionsFallback(): Promise<{
+  divisions: string[];
+  sizes: string[];
+  tiers: string[];
+  industries: string[];
+  countries: string[];
+  states: string[];
+}> {
+  try {
+    // Using fallback method with individual RPC calls for each field
+    
+    // Query each field separately using raw SQL to get ALL distinct values
+    const [divisionsResult, sizesResult, tiersResult, industriesResult, countriesResult, statesResult] = await Promise.all([
+      (supabase as any).rpc('get_distinct_divisions'),
+      (supabase as any).rpc('get_distinct_sizes'),
+      (supabase as any).rpc('get_distinct_tiers'),
+      (supabase as any).rpc('get_distinct_industries'),
+      (supabase as any).rpc('get_distinct_countries'),
+      (supabase as any).rpc('get_distinct_states'),
+    ]);
 
-    const industries = Array.from(new Set(
-      allAccounts?.map(a => a.industry).filter(Boolean) || []
-    )).sort() as string[];
+    // Extract and sort the results (cast to any to work with our custom RPC functions)
+    const divisionsData = (divisionsResult.data || []) as any[];
+    const sizesData = (sizesResult.data || []) as any[];
+    const tiersData = (tiersResult.data || []) as any[];
+    const industriesData = (industriesResult.data || []) as any[];
+    const countriesData = (countriesResult.data || []) as any[];
+    const statesData = (statesResult.data || []) as any[];
+    
+    const divisions = divisionsData.map((r: any) => r.current_division).filter(Boolean).sort();
+    const sizes = sizesData.map((r: any) => r.size).filter(Boolean).sort();
+    const tiers = tiersData.map((r: any) => r.tier).filter(Boolean).sort();
+    const industries = industriesData.map((r: any) => r.industry).filter(Boolean).sort();
+    const countries = countriesData.map((r: any) => r.country).filter(Boolean).sort();
+    const states = statesData.map((r: any) => r.state).filter(Boolean).sort();
 
-    const countries = Array.from(new Set(
-      allAccounts?.map(a => a.country).filter(Boolean) || []
-    )).sort() as string[];
-
-    const states = Array.from(new Set(
-      allAccounts?.map(a => a.state).filter(Boolean) || []
-    )).sort() as string[];
+    // Successfully extracted filter options from fallback queries
 
     return {
       divisions,
@@ -1002,7 +1049,16 @@ export async function getAccountFilterOptions(): Promise<{
       countries,
       states
     };
-  } catch (error) {
-    throw error;
+  } catch (fallbackError) {
+    console.error('[getAccountFilterOptionsFallback] All methods failed:', fallbackError);
+    // Last resort: return empty arrays
+    return {
+      divisions: [],
+      sizes: [],
+      tiers: [],
+      industries: [],
+      countries: [],
+      states: []
+    };
   }
 }

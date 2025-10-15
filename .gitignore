@@ -115,3 +115,6 @@ jspm_packages/
 
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
+
+# Scripts with sensitive credentials
+scripts/view-credentials.command

@@ -107,6 +107,8 @@ export default function SellerDetailPage() {
   const queryClient = useQueryClient();
   const { logPin, logUnpin, logEvent, logAssign, logUnassign, logUpdate } = useAudit();
   
+  // Component mounted
+  
   // Enable real-time updates for this seller - syncs across tabs and users
   useRealtimeSeller(id);
   
@@ -278,11 +280,17 @@ export default function SellerDetailPage() {
         const options = await getAccountFilterOptions();
         setFilterOptions(options);
       } catch (error) {
+        console.error('[Filter Options] Error loading filter options:', error);
+        toast({
+          title: "Error loading filters",
+          description: "Could not load filter options. Please refresh the page.",
+          variant: "destructive",
+        });
       }
     };
 
     loadFilterOptions();
-  }, []);
+  }, [toast]);
 
   // Centralized cache invalidation function
   const invalidateAllSellerQueries = useCallback(async () => {
