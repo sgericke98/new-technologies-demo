@@ -481,7 +481,7 @@ export default function DashboardPage() {
       });
 
       // Refresh the materialized view to reflect changes
-      await supabase.rpc('refresh_performance_views');
+      await supabase.rpc('smart_refresh_performance_views');
       
       // Invalidate queries to refresh data
       queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });

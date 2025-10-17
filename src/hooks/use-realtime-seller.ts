@@ -34,7 +34,7 @@ export function useRealtimeSeller(sellerId: string) {
           
           // Refresh materialized views to sync with real data
           try {
-            await supabase.rpc('refresh_performance_views');
+            await supabase.rpc('smart_refresh_performance_views');
           } catch (error) {
             console.error('Error refreshing materialized views:', error);
           }
@@ -78,7 +78,7 @@ export function useRealtimeSeller(sellerId: string) {
           
           // Refresh materialized views to sync with real data
           try {
-            await supabase.rpc('refresh_performance_views');
+            await supabase.rpc('smart_refresh_performance_views');
           } catch (error) {
             console.error('Error refreshing materialized views:', error);
           }

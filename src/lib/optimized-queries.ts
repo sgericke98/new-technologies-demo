@@ -241,7 +241,7 @@ export async function getSellerRevenueOptimized() {
  */
 export async function refreshPerformanceViews() {
   try {
-    const { error } = await supabase.rpc('refresh_performance_views');
+    const { error } = await supabase.rpc('smart_refresh_performance_views');
     
     if (error) {
       throw error;

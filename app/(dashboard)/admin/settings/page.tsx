@@ -382,7 +382,7 @@ export default function AdminSettingsPage() {
 
       // Refresh materialized view to recalculate health indicators with new thresholds
       try {
-        await supabase.rpc('refresh_performance_views');
+        await supabase.rpc('smart_refresh_performance_views');
         
         // Invalidate dashboard queries to refresh UI with new thresholds
         queryClient.invalidateQueries({ queryKey: ["unified-dashboard"] });

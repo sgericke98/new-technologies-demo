@@ -549,7 +549,7 @@ export default function SellerDetailPage() {
       
       // Refresh the materialized view to reflect changes (same as dashboard)
       try {
-        await supabase.rpc('refresh_performance_views');
+        await supabase.rpc('smart_refresh_performance_views');
       } catch (refreshError) {
         // Don't throw error - this is not critical for the user action
       }
@@ -906,7 +906,7 @@ export default function SellerDetailPage() {
             // Refresh materialized view and revalidate dashboard for must_keep changes
             if (status === 'must_keep' || (account as any).status === 'must_keep') {
               try {
-                await supabase.rpc('refresh_performance_views');
+                await supabase.rpc('smart_refresh_performance_views');
                 queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
                 queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
                 queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
@@ -1003,7 +1003,7 @@ export default function SellerDetailPage() {
             // Refresh materialized view and revalidate dashboard for must_keep assignments
             if (status === 'must_keep') {
               try {
-                await supabase.rpc('refresh_performance_views');
+                await supabase.rpc('smart_refresh_performance_views');
                 queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
                 queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
                 queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
@@ -1066,7 +1066,7 @@ export default function SellerDetailPage() {
           // Refresh materialized view and revalidate dashboard if account was in must_keep
           if ((account as any).status === 'must_keep') {
             try {
-              await supabase.rpc('refresh_performance_views');
+              await supabase.rpc('smart_refresh_performance_views');
               queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
               queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
               queryClient.invalidateQueries({ queryKey: ["manager-performance"] });
@@ -1224,7 +1224,7 @@ export default function SellerDetailPage() {
           // Refresh materialized view and revalidate dashboard if account was in must_keep
           if ((account as any).status === 'must_keep') {
             try {
-              await supabase.rpc('refresh_performance_views');
+              await supabase.rpc('smart_refresh_performance_views');
               queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
               queryClient.invalidateQueries({ queryKey: ["unified-dashboard"], exact: false });
               queryClient.invalidateQueries({ queryKey: ["manager-performance"] });

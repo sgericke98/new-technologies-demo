@@ -466,7 +466,31 @@ export type Database = {
           },
         ]
       }
-      seller_managers: {
+      import_status: {
+      Row: {
+        id: string
+        is_importing: boolean
+        started_at: string
+        user_id: string
+        updated_at: string
+      }
+      Insert: {
+        id: string
+        is_importing: boolean
+        started_at: string
+        user_id: string
+        updated_at?: string
+      }
+      Update: {
+        id?: string
+        is_importing?: boolean
+        started_at?: string
+        user_id?: string
+        updated_at?: string
+      }
+      Relationships: []
+    }
+    seller_managers: {
         Row: {
           created_at: string
           id: string
@@ -763,6 +787,27 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: undefined
       }
+    smart_refresh_performance_views: {
+      Args: Record<PropertyKey, never>
+      Returns: undefined
+    }
+    refresh_performance_views_simple: {
+      Args: Record<PropertyKey, never>
+      Returns: undefined
+    }
+    acquire_import_lock: {
+      Args: {
+        user_id: string
+        duration_minutes: number
+      }
+      Returns: boolean
+    }
+    release_import_lock: {
+      Args: {
+        user_id: string
+      }
+      Returns: boolean
+    }
     }
     Enums: {
       app_role: "MASTER" | "MANAGER"

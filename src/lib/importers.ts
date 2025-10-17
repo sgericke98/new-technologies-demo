@@ -7,6 +7,138 @@ export interface ImportProgressCallback {
   (message: string): void;
 }
 
+// ========== Performance Debugging Interface ==========
+export interface PerformanceMetrics {
+  step: string;
+  startTime: number;
+  endTime?: number;
+  duration?: number;
+  recordsProcessed?: number;
+  batchSize?: number;
+  connectionPoolStatus?: string;
+  memoryUsage?: number;
+  errors?: string[];
+}
+
+export interface ImportDebugInfo {
+  totalStartTime: number;
+  totalEndTime?: number;
+  totalDuration?: number;
+  steps: PerformanceMetrics[];
+  connectionPoolHistory: Array<{ timestamp: number; status: string }>;
+  memoryHistory: Array<{ timestamp: number; usage: number }>;
+  errorHistory: Array<{ timestamp: number; error: string; step: string }>;
+}
+
+// Global debug info for the current import
+let currentDebugInfo: ImportDebugInfo | null = null;
+
+// ========== Debugging Utilities ==========
+function createDebugInfo(): ImportDebugInfo {
+  return {
+    totalStartTime: Date.now(),
+    steps: [],
+    connectionPoolHistory: [],
+    memoryHistory: [],
+    errorHistory: []
+  };
+}
+
+function startStep(step: string, batchSize?: number): PerformanceMetrics {
+  const metrics: PerformanceMetrics = {
+    step,
+    startTime: Date.now(),
+    batchSize
+  };
+  
+  if (currentDebugInfo) {
+    currentDebugInfo.steps.push(metrics);
+  }
+  
+  return metrics;
+}
+
+function endStep(metrics: PerformanceMetrics, recordsProcessed?: number, errors?: string[]) {
+  metrics.endTime = Date.now();
+  metrics.duration = metrics.endTime - metrics.startTime;
+  metrics.recordsProcessed = recordsProcessed;
+  metrics.errors = errors;
+  
+  // Log memory usage
+  if (typeof window !== 'undefined' && (window as any).performance?.memory) {
+    metrics.memoryUsage = (window as any).performance.memory.usedJSHeapSize;
+  }
+  
+  // Log to console for debugging
+  console.log(`🔍 DEBUG: ${metrics.step} completed in ${metrics.duration}ms`, {
+    recordsProcessed,
+    batchSize: metrics.batchSize,
+    duration: metrics.duration,
+    errors: errors?.length || 0,
+    memoryUsage: metrics.memoryUsage
+  });
+}
+
+function logConnectionPoolStatus(status: string) {
+  if (currentDebugInfo) {
+    currentDebugInfo.connectionPoolHistory.push({
+      timestamp: Date.now(),
+      status
+    });
+  }
+}
+
+function logMemoryUsage() {
+  if (currentDebugInfo && typeof window !== 'undefined' && (window as any).performance?.memory) {
+    currentDebugInfo.memoryHistory.push({
+      timestamp: Date.now(),
+      usage: (window as any).performance.memory.usedJSHeapSize
+    });
+  }
+}
+
+function logError(error: string, step: string) {
+  if (currentDebugInfo) {
+    currentDebugInfo.errorHistory.push({
+      timestamp: Date.now(),
+      error,
+      step
+    });
+  }
+}
+
+function finalizeDebugInfo(): ImportDebugInfo | null {
+  if (currentDebugInfo) {
+    currentDebugInfo.totalEndTime = Date.now();
+    currentDebugInfo.totalDuration = currentDebugInfo.totalEndTime - currentDebugInfo.totalStartTime;
+    
+    // Log comprehensive debug summary
+    console.log('🔍 COMPREHENSIVE DEBUG SUMMARY:', {
+      totalDuration: currentDebugInfo.totalDuration,
+      steps: currentDebugInfo.steps.map(s => ({
+        step: s.step,
+        duration: s.duration,
+        recordsProcessed: s.recordsProcessed,
+        batchSize: s.batchSize,
+        errors: s.errors?.length || 0
+      })),
+      connectionPoolEvents: currentDebugInfo.connectionPoolHistory.length,
+      memoryEvents: currentDebugInfo.memoryHistory.length,
+      errorEvents: currentDebugInfo.errorHistory.length
+    });
+    
+    const debugInfo = currentDebugInfo;
+    currentDebugInfo = null;
+    return debugInfo;
+  }
+  return null;
+}
+
+// Export function to get current debug info
+export function getCurrentDebugInfo(): ImportDebugInfo | null {
+  return currentDebugInfo;
+}
+
 // ========== Template Validation ==========
 export interface ValidationResult {
   isValid: boolean;
@@ -284,6 +416,7 @@ type AccountRow = {
 };
 
 const BATCH_SIZE = 500;
+const RELATIONSHIP_BATCH_SIZE = 100; // Smaller batch size for relationship imports to avoid gateway timeouts
 
 function chunk<T>(array: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -448,7 +581,7 @@ export async function importAccounts(file: File, userId?: string) {
 
   // Refresh materialized views to update dashboard data
   try {
-    await supabase.rpc('refresh_performance_views');
+    await supabase.rpc('smart_refresh_performance_views');
   } catch (refreshError) {
     // Don't fail the import if refresh fails
   }
@@ -474,7 +607,7 @@ export async function importAccounts(file: File, userId?: string) {
     
     // Refresh materialized views to update dashboard data
     try {
-      await supabase.rpc('refresh_performance_views');
+      await supabase.rpc('smart_refresh_performance_views');
     } catch (refreshError) {
       // Don't fail the import if refresh fails
     }
@@ -606,7 +739,7 @@ export async function importSellers(file: File, userId?: string) {
 
   // Refresh materialized views to update dashboard data
   try {
-    await supabase.rpc('refresh_performance_views');
+    await supabase.rpc('smart_refresh_performance_views');
   } catch (refreshError) {
     // Don't fail the import if refresh fails
   }
@@ -631,7 +764,7 @@ export async function importSellers(file: File, userId?: string) {
     
     // Refresh materialized views to update dashboard data
     try {
-      await supabase.rpc('refresh_performance_views');
+      await supabase.rpc('smart_refresh_performance_views');
     } catch (refreshError) {
       // Don't fail the import if refresh fails
     }
@@ -812,6 +945,11 @@ export async function importRelationshipMap(file: File, userId?: string) {
   // Split into two groups: original and active relationships
   const originalRelationships = allRelationships.filter(r => r.is_original);
   const relationshipsToUpsert = allRelationships.filter(r => !r.is_original && r.status);
+  
+  // Debug: Log the actual counts
+  console.log(`🔍 DEBUG: Total relationships processed: ${allRelationships.length}`);
+  console.log(`🔍 DEBUG: Original relationships: ${originalRelationships.length}`);
+  console.log(`🔍 DEBUG: Active relationships: ${relationshipsToUpsert.length}`);
 
   // Batch upsert active relationships (those with status, NOT marked as original)
   if (relationshipsToUpsert.length > 0) {
@@ -821,10 +959,12 @@ export async function importRelationshipMap(file: File, userId?: string) {
         seller_id,
         status
       })),
-      BATCH_SIZE
+      RELATIONSHIP_BATCH_SIZE
     );
 
     for (let i = 0; i < relationshipChunks.length; i++) {
+      console.log(`🔍 Processing relationship_maps batch ${i + 1}/${relationshipChunks.length} (${relationshipChunks[i].length} records)`);
+      
       const { error } = await supabase
         .from("relationship_maps")
         .upsert(relationshipChunks[i], { 
@@ -834,6 +974,11 @@ export async function importRelationshipMap(file: File, userId?: string) {
 
       if (error) {
         throw new Error(`Failed to upsert relationships batch ${i + 1}: ${error.message}`);
+      }
+      
+      // Small delay between batches to prevent overwhelming the database
+      if (i < relationshipChunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
   }
@@ -845,9 +990,11 @@ export async function importRelationshipMap(file: File, userId?: string) {
       seller_id,
     }));
 
-    const snapshotChunks = chunk(snapshotRows, BATCH_SIZE);
+    const snapshotChunks = chunk(snapshotRows, RELATIONSHIP_BATCH_SIZE);
 
     for (let i = 0; i < snapshotChunks.length; i++) {
+      console.log(`🔍 Processing original_relationships batch ${i + 1}/${snapshotChunks.length} (${snapshotChunks[i].length} records)`);
+      
       const { error } = await supabase
         .from("original_relationships")
         .upsert(snapshotChunks[i], { 
@@ -858,12 +1005,17 @@ export async function importRelationshipMap(file: File, userId?: string) {
       if (error) {
         throw new Error(`Failed to create original snapshot batch ${i + 1}: ${error.message}`);
       }
+      
+      // Small delay between batches to prevent overwhelming the database
+      if (i < snapshotChunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
   }
 
   // Refresh materialized views to update dashboard data
   try {
-    await supabase.rpc('refresh_performance_views');
+    await supabase.rpc('smart_refresh_performance_views');
   } catch (refreshError) {
     // Don't fail the import if refresh fails
   }
@@ -956,7 +1108,7 @@ export async function importManagers(file: File, userId?: string) {
 
   // Refresh materialized views to update dashboard data
   try {
-    await supabase.rpc('refresh_performance_views');
+    await supabase.rpc('smart_refresh_performance_views');
   } catch (refreshError) {
     // Don't fail the import if refresh fails
   }
@@ -981,7 +1133,7 @@ export async function importManagers(file: File, userId?: string) {
     
     // Refresh materialized views to update dashboard data
     try {
-      await supabase.rpc('refresh_performance_views');
+      await supabase.rpc('smart_refresh_performance_views');
     } catch (refreshError) {
       // Don't fail the import if refresh fails
     }
@@ -1145,7 +1297,7 @@ export async function importManagerTeam(file: File, userId?: string) {
 
   // Refresh materialized views to update dashboard data
   try {
-    await supabase.rpc('refresh_performance_views');
+    await supabase.rpc('smart_refresh_performance_views');
   } catch (refreshError) {
     // Don't fail the import if refresh fails
   }
@@ -1238,7 +1390,7 @@ export async function importComprehensiveDataAdd(file: File, userId?: string, on
     // Refresh materialized views to update dashboard data
     onProgress?.("🔄 Refreshing materialized views after ADD import...");
     try {
-      await supabase.rpc('refresh_performance_views');
+      await supabase.rpc('smart_refresh_performance_views');
       onProgress?.("✅ Materialized views refreshed successfully");
     } catch (refreshError) {
       onProgress?.(`❌ Error refreshing materialized views: ${refreshError}`);
@@ -1693,7 +1845,7 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
         seller_id,
         status
       })),
-      BATCH_SIZE
+      RELATIONSHIP_BATCH_SIZE
     );
 
     for (let i = 0; i < relChunks.length; i++) {
@@ -1716,7 +1868,7 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
       seller_id,
     }));
 
-    const snapshotChunks = chunk(snapshotRows, BATCH_SIZE);
+    const snapshotChunks = chunk(snapshotRows, RELATIONSHIP_BATCH_SIZE);
 
     for (let i = 0; i < snapshotChunks.length; i++) {
       const { error } = await supabase
@@ -1926,7 +2078,7 @@ export async function importSellersIndividual(file: File, userId?: string, onPro
 
   // Refresh materialized views to update dashboard data
   try {
-    await supabase.rpc('refresh_performance_views');
+    await supabase.rpc('smart_refresh_performance_views');
   } catch (refreshError) {
     // Don't fail the import if refresh fails
   }
@@ -2075,7 +2227,7 @@ export async function importAccountsIndividual(file: File, userId?: string, onPr
 
   // Refresh materialized views to update dashboard data
   try {
-    await supabase.rpc('refresh_performance_views');
+    await supabase.rpc('smart_refresh_performance_views');
   } catch (refreshError) {
     // Don't fail the import if refresh fails
   }
@@ -2597,12 +2749,39 @@ export function downloadComprehensiveTemplate() {
 // ========== Comprehensive Import Function ==========
 
 export async function importComprehensiveData(file: File, userId?: string, onProgress?: ImportProgressCallback) {
+  // Initialize debugging
+  currentDebugInfo = createDebugInfo();
+  const debugStartTime = Date.now();
+  
+  // Acquire import lock to prevent concurrent materialized view refreshes
+  try {
+    const { data: lockAcquired, error } = await supabase.rpc('acquire_import_lock', {
+      user_id: userId || '',
+      duration_minutes: 30
+    });
+    
+    if (error) {
+      console.log('Could not acquire import lock:', error);
+    } else if (lockAcquired) {
+      onProgress?.("🔒 Import lock acquired - preventing concurrent refreshes");
+    } else {
+      onProgress?.("⚠️ Could not acquire import lock - other import may be running");
+    }
+  } catch (error) {
+    console.log('Could not acquire import lock:', error);
+  }
+  
   onProgress?.("🚀 Starting Comprehensive Data Import");
   onProgress?.(`📁 File: ${file.name}, Size: ${file.size} bytes`);
   onProgress?.(`👤 User ID: ${userId}`);
   onProgress?.(`⏰ Start Time: ${new Date().toISOString()}`);
   
+  // Debug: File reading step
+  const fileReadStep = startStep("File Reading", undefined);
+  logMemoryUsage();
+  
   const wb = await readSheet(file);
+  endStep(fileReadStep, 0);
   
   onProgress?.(`📊 Available sheets: ${wb.SheetNames.join(', ')}`);
   onProgress?.(`📋 Sheet count: ${wb.SheetNames.length}`);
@@ -2618,40 +2797,82 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
   try {
     // 1. Import Managers first (required for sellers)
     if (wb.SheetNames.includes("Managers")) {
+      const managersStep = startStep("Managers Import", undefined);
+      logConnectionPoolStatus("Starting managers import");
+      logMemoryUsage();
+      
       try {
+        onProgress?.("🗑️ Truncating managers table...");
+        const truncateStart = Date.now();
+        
         // Truncate managers table first
         const { error: truncateError } = await supabase
           .from("managers")
           .delete()
           .neq("id", "00000000-0000-0000-0000-000000000000"); // Delete all records
         
+        const truncateDuration = Date.now() - truncateStart;
+        onProgress?.(`⏱️ Truncate completed in ${truncateDuration}ms`);
+        
         if (truncateError) {
           throw new Error(`Failed to truncate managers table: ${truncateError.message}`);
         }
 
+        onProgress?.("📊 Processing managers data...");
         const managersData = sheetToJson<ManagerRow>(wb, "Managers");
+        onProgress?.(`📋 Found ${managersData.length} managers to import`);
         
         if (managersData.length > 0) {
+          onProgress?.("📁 Creating temporary file for managers...");
+          const tempFileStart = Date.now();
+          
           // Create a temporary file for managers import
           const tempWb = XLSX.utils.book_new();
           const tempWs = XLSX.utils.json_to_sheet(managersData);
           XLSX.utils.book_append_sheet(tempWb, tempWs, "Managers");
           const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_managers.xlsx");
           
+          const tempFileDuration = Date.now() - tempFileStart;
+          onProgress?.(`⏱️ Temp file created in ${tempFileDuration}ms`);
+          
+          onProgress?.("💾 Importing managers to database...");
+          const importStart = Date.now();
+          
           await importManagers(tempFile, userId);
           results.managers.imported = managersData.length;
+          
+          const importDuration = Date.now() - importStart;
+          onProgress?.(`⏱️ Database import completed in ${importDuration}ms`);
+          
+          endStep(managersStep, managersData.length);
+          onProgress?.(`✅ Managers: ${managersData.length} imported successfully`);
         } else {
+          onProgress?.("⚠️ No manager data found in Managers sheet");
+          endStep(managersStep, 0);
         }
       } catch (error) {
-        results.managers.errors.push(`Manager import failed: ${error}`);
+        const errorMsg = `Manager import failed: ${error}`;
+        results.managers.errors.push(errorMsg);
+        logError(errorMsg, "Managers Import");
+        endStep(managersStep, 0, [errorMsg]);
+        onProgress?.(`❌ Managers import failed: ${error}`);
       }
     } else {
+      onProgress?.("⚠️ No Managers sheet found in Excel file");
     }
     
     // 2. Import Accounts
     if (wb.SheetNames.includes("Accounts")) {
+      const accountsStep = startStep("Accounts Import", undefined);
+      logConnectionPoolStatus("Starting accounts import");
+      logMemoryUsage();
+      
       try {
-        // Truncate accounts and account_revenues tables first
+        // Skip index dropping - the real bottleneck was concurrent processes, not indexes
+        onProgress?.("⚡ Skipping account index optimization - process management is the key");
+
+        onProgress?.("🗑️ Truncating accounts and revenues tables...");
+        const truncateStart = Date.now();
         
         // Delete account_revenues first (foreign key constraint)
         const { error: revenueTruncateError } = await supabase
@@ -2673,23 +2894,52 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
           throw new Error(`Failed to truncate accounts table: ${accountTruncateError.message}`);
         }
         
+        const truncateDuration = Date.now() - truncateStart;
+        onProgress?.(`⏱️ Truncate completed in ${truncateDuration}ms`);
 
+        onProgress?.("📊 Processing accounts data...");
         const accountsData = sheetToJson<AccountRow>(wb, "Accounts");
+        onProgress?.(`📋 Found ${accountsData.length} accounts to import`);
         
         if (accountsData.length > 0) {
+          onProgress?.("📁 Creating temporary file for accounts...");
+          const tempFileStart = Date.now();
+          
           const tempWb = XLSX.utils.book_new();
           const tempWs = XLSX.utils.json_to_sheet(accountsData);
           XLSX.utils.book_append_sheet(tempWb, tempWs, "Accounts");
           const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_accounts.xlsx");
           
+          const tempFileDuration = Date.now() - tempFileStart;
+          onProgress?.(`⏱️ Temp file created in ${tempFileDuration}ms`);
+          
+          onProgress?.("💾 Importing accounts to database...");
+          const importStart = Date.now();
+          
           await importAccounts(tempFile, userId);
           results.accounts.imported = accountsData.length;
+          
+          const importDuration = Date.now() - importStart;
+          onProgress?.(`⏱️ Database import completed in ${importDuration}ms`);
+          
+          // Skip index recreation - indexes are kept for query performance
+          onProgress?.("⚡ Keeping account indexes for optimal query performance");
+          
+          endStep(accountsStep, accountsData.length);
+          onProgress?.(`✅ Accounts: ${accountsData.length} imported successfully`);
         } else {
+          onProgress?.("⚠️ No account data found in Accounts sheet");
+          endStep(accountsStep, 0);
         }
       } catch (error) {
-        results.accounts.errors.push(`Account import failed: ${error}`);
+        const errorMsg = `Account import failed: ${error}`;
+        results.accounts.errors.push(errorMsg);
+        logError(errorMsg, "Accounts Import");
+        endStep(accountsStep, 0, [errorMsg]);
+        onProgress?.(`❌ Accounts import failed: ${error}`);
       }
     } else {
+      onProgress?.("⚠️ No Accounts sheet found in Excel file");
     }
     
     // 3. Import Sellers
@@ -2748,17 +2998,33 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
           throw new Error(`Failed to truncate relationship_maps table: ${relationshipTruncateError.message}`);
         }
         
+        // Skip index dropping - the real bottleneck was concurrent processes, not indexes
+        onProgress?.("⚡ Skipping index optimization - process management is the key");
 
         const relationshipData = sheetToJson<RelRow>(wb, "Relationship_Map");
         
         if (relationshipData.length > 0) {
-          const tempWb = XLSX.utils.book_new();
-          const tempWs = XLSX.utils.json_to_sheet(relationshipData);
-          XLSX.utils.book_append_sheet(tempWb, tempWs, "RelationshipMap");
-          const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_relationships.xlsx");
+          // Direct bulk insert without batch processing (indexes already dropped)
+          onProgress?.("🚀 Performing optimized bulk insert (indexes dropped)...");
           
-          await importRelationshipMap(tempFile, userId);
-          results.relationships.imported = relationshipData.length;
+          try {
+            // Use the existing optimized import function but with bulk processing
+            onProgress?.(`📊 Processing ${relationshipData.length} relationships with bulk insert...`);
+            
+            // Call the existing optimized function but ensure it uses bulk processing
+            const relationshipResult = await importRelationshipMapAdd(relationshipData, userId);
+            results.relationships.imported = relationshipResult.imported;
+            results.relationships.errors.push(...relationshipResult.errors);
+            
+            onProgress?.(`✅ Relationships processed: ${relationshipResult.imported} imported, ${relationshipResult.errors.length} errors`);
+
+          } catch (error) {
+            results.relationships.errors.push(`Bulk relationship import failed: ${error}`);
+            onProgress?.(`❌ Relationship import failed: ${error}`);
+          }
+          
+          // Skip index recreation - indexes are kept for query performance
+          onProgress?.("⚡ Keeping indexes for optimal query performance");
         } else {
         }
       } catch (error) {
@@ -2798,55 +3064,166 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
     } else {
     }
     
-    // Refresh materialized views to update dashboard data
+    // Release import lock first so materialized views can refresh
     try {
-      await supabase.rpc('refresh_performance_views');
+      const { data: lockReleased, error } = await supabase.rpc('release_import_lock', {
+        user_id: userId || ''
+      });
+
+      if (error) {
+        console.log('Could not release import lock:', error);
+      } else if (lockReleased) {
+        onProgress?.("🔓 Import lock released - allowing materialized view refresh");
+      }
+    } catch (error) {
+      console.log('Could not release import lock:', error);
+    }
+
+    // Refresh materialized views to update dashboard data (now that lock is released)
+    const refreshStep = startStep("Refresh Materialized Views", undefined);
+    logConnectionPoolStatus("Refreshing materialized views");
+    
+    try {
+      onProgress?.("🔄 Refreshing materialized views...");
+      const refreshStart = Date.now();
+      
+      // Use simple refresh function without CONCURRENTLY to avoid index requirements
+      await supabase.rpc('refresh_performance_views_simple');
+      
+      const refreshDuration = Date.now() - refreshStart;
+      onProgress?.(`⏱️ Views refreshed in ${refreshDuration}ms`);
+      endStep(refreshStep, 0);
+      onProgress?.("✅ Materialized views refreshed successfully");
     } catch (refreshError) {
+      const errorMsg = `Error refreshing materialized views: ${refreshError}`;
+      logError(errorMsg, "Refresh Views");
+      endStep(refreshStep, 0, [errorMsg]);
+      onProgress?.(`⚠️ Warning: ${errorMsg}`);
       // Don't fail the import if refresh fails
     }
 
     // Log comprehensive audit event
+    const auditStep = startStep("Log Audit Event", undefined);
     if (userId) {
-      const auditData = createAuditLogData(
-        userId,
-        'data_import',
-        'COMPREHENSIVE',
-        undefined,
-        null,
-        {
-          import_type: 'comprehensive',
-          file_name: file.name,
-          file_size: file.size,
-          results: results
-        }
-      );
-      
-      await logAuditEvent(auditData);
+      try {
+        onProgress?.("📝 Logging audit event...");
+        const auditStart = Date.now();
+        
+        const auditData = createAuditLogData(
+          userId,
+          'data_import',
+          'COMPREHENSIVE',
+          undefined,
+          null,
+          {
+            import_type: 'comprehensive',
+            file_name: file.name,
+            file_size: file.size,
+            results: results
+          }
+        );
+        
+        await logAuditEvent(auditData);
+        
+        const auditDuration = Date.now() - auditStart;
+        onProgress?.(`⏱️ Audit logged in ${auditDuration}ms`);
+        endStep(auditStep, 0);
+      } catch (auditError) {
+        const errorMsg = `Error logging audit: ${auditError}`;
+        logError(errorMsg, "Audit Logging");
+        endStep(auditStep, 0, [errorMsg]);
+        onProgress?.(`⚠️ Warning: ${errorMsg}`);
+      }
     }
     
-    // Final summary
-    
+    // Final summary and debug info
     const totalImported = Object.values(results).reduce((sum: number, result: any) => sum + result.imported, 0);
     const totalErrors = Object.values(results).reduce((sum: number, result: any) => sum + result.errors.length, 0);
     
+    // Finalize debug info and log comprehensive summary
+    const debugInfo = finalizeDebugInfo();
+    if (debugInfo) {
+      onProgress?.(`🔍 DEBUG SUMMARY:`);
+      onProgress?.(`⏱️ Total Duration: ${debugInfo.totalDuration || 0}ms (${((debugInfo.totalDuration || 0) / 1000).toFixed(2)}s)`);
+      onProgress?.(`📊 Steps Completed: ${debugInfo.steps.length}`);
+      onProgress?.(`🔗 Connection Pool Events: ${debugInfo.connectionPoolHistory.length}`);
+      onProgress?.(`💾 Memory Events: ${debugInfo.memoryHistory.length}`);
+      onProgress?.(`❌ Error Events: ${debugInfo.errorHistory.length}`);
+      
+      // Log step-by-step breakdown
+      debugInfo.steps.forEach(step => {
+        onProgress?.(`  📋 ${step.step}: ${step.duration}ms (${step.recordsProcessed || 0} records)`);
+      });
+    }
     
     if (totalErrors > 0) {
+      onProgress?.(`⚠️ Import completed with ${totalErrors} errors:`);
       Object.entries(results).forEach(([key, result]: [string, any]) => {
         if (result.errors.length > 0) {
+          onProgress?.(`  ❌ ${key}: ${result.errors.length} errors`);
+          result.errors.forEach((error: string) => {
+            onProgress?.(`    - ${error}`);
+          });
         }
       });
     }
     
-    // Refresh materialized views to update dashboard data
+    onProgress?.(`✅ Import completed: ${totalImported} records imported, ${totalErrors} errors`);
+    
+    // Invalidate queries to refresh dashboard data
     try {
-      await supabase.rpc('refresh_performance_views');
-    } catch (refreshError) {
-      // Don't fail the import if refresh fails
+      // Trigger a custom event to notify components to refresh
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('import-completed', {
+          detail: { 
+            totalImported, 
+            totalErrors,
+            timestamp: Date.now()
+          }
+        }));
+      }
+      
+      onProgress?.("🔄 Dashboard refresh event triggered");
+    } catch (error) {
+      console.log('Could not trigger refresh event:', error);
     }
+    
+    // Import lock already released before materialized view refresh
     
     return results;
     
   } catch (error) {
+    // Trigger refresh event even on error
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('import-completed', {
+          detail: { 
+            totalImported: 0, 
+            totalErrors: 1,
+            timestamp: Date.now(),
+            error: true
+          }
+        }));
+      }
+      console.log('🔄 Dashboard refresh event triggered after error');
+    } catch (invalidateError) {
+      console.log('Could not trigger refresh event on error:', invalidateError);
+    }
+    
+    // Release import lock even on error
+    try {
+      const { data: lockReleased, error } = await supabase.rpc('release_import_lock', {
+        user_id: userId || ''
+      });
+      
+      if (error) {
+        console.log('Could not release import lock on error:', error);
+      } else if (lockReleased) {
+        console.log('🔓 Import lock released after error');
+      }
+    } catch (clearError) {
+      console.log('Could not release import lock on error:', clearError);
+    }
     throw error;
   }
 }

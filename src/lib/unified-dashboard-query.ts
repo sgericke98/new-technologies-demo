@@ -211,7 +211,7 @@ export async function getMasterDashboardData(): Promise<UnifiedDashboardData[]> 
  */
 export async function refreshUnifiedDashboardView(): Promise<void> {
   try {
-    const { error } = await supabase.rpc('refresh_performance_views');
+    const { error } = await supabase.rpc('smart_refresh_performance_views');
     
     if (error) {
       throw error;

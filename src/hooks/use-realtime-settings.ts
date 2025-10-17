@@ -30,7 +30,7 @@ export function useRealtimeSettings(onSettingsChanged?: () => void) {
           
           // Refresh materialized views since health indicators depend on these settings
           try {
-            await supabase.rpc('refresh_performance_views');
+            await supabase.rpc('smart_refresh_performance_views');
           } catch (error) {
             console.error('Error refreshing materialized views:', error);
           }
@@ -74,7 +74,7 @@ export function useRealtimeSettings(onSettingsChanged?: () => void) {
           
           // Refresh materialized views since health indicators depend on these settings
           try {
-            await supabase.rpc('refresh_performance_views');
+            await supabase.rpc('smart_refresh_performance_views');
           } catch (error) {
             console.error('Error refreshing materialized views:', error);
           }
