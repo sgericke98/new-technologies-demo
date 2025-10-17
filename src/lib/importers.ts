@@ -1789,15 +1789,46 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
     }
   }
 
-  // Get all accounts and sellers for mapping
-  const { data: accounts } = await supabase.from("accounts").select("id,name");
-  const { data: sellers } = await supabase.from("sellers").select("id,name");
-
-  if (!accounts || !sellers) {
-    throw new Error("Failed to fetch accounts or sellers for relationship mapping");
+  // Get all accounts and sellers for mapping (fetch fresh data with pagination)
+  console.log("🔄 Fetching fresh account and seller data for relationship mapping...");
+  
+  // Fetch all accounts with pagination to avoid 1000 row limit
+  let allAccounts: any[] = [];
+  let from = 0;
+  const limit = 1000;
+  
+  while (true) {
+    const { data: accountsBatch, error: accountsError } = await supabase
+      .from("accounts")
+      .select("id,name")
+      .range(from, from + limit - 1);
+    
+    if (accountsError) {
+      throw new Error(`Failed to fetch accounts: ${accountsError.message}`);
+    }
+    
+    if (!accountsBatch || accountsBatch.length === 0) break;
+    
+    allAccounts.push(...accountsBatch);
+    from += limit;
+    
+    if (accountsBatch.length < limit) break; // Last batch
   }
+  
+  // Fetch all sellers (should be under 1000)
+  const { data: sellers, error: sellersError } = await supabase.from("sellers").select("id,name");
+  
+  if (sellersError) {
+    throw new Error(`Failed to fetch sellers: ${sellersError.message}`);
+  }
+  
+  if (!sellers) {
+    throw new Error("Failed to fetch sellers for relationship mapping");
+  }
+  
+  console.log(`📊 Fresh data fetched - Accounts: ${allAccounts.length}, Sellers: ${sellers.length}`);
 
-  const accountMap = new Map(accounts.map(a => [a.name, a.id]));
+  const accountMap = new Map(allAccounts.map(a => [a.name, a.id]));
   const sellerMap = new Map(sellers.map(s => [s.name, s.id]));
 
   // Map relationships - separate original from active relationships
@@ -1808,6 +1839,18 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
       const sellerId = sellerMap.get(r.seller_name);
       
       if (!accountId || !sellerId) {
+        if (!accountId) {
+          console.log(`❌ Account NOT FOUND: "${r.account_name}"`);
+          // Show first few available account names for debugging
+          const availableAccounts = Array.from(accountMap.keys()).slice(0, 5);
+          console.log(`   Available accounts (first 5): ${availableAccounts.join(', ')}`);
+        }
+        if (!sellerId) {
+          console.log(`❌ Seller NOT FOUND: "${r.seller_name}"`);
+          // Show first few available seller names for debugging
+          const availableSellers = Array.from(sellerMap.keys()).slice(0, 5);
+          console.log(`   Available sellers (first 5): ${availableSellers.join(', ')}`);
+        }
         return null;
       }
 
@@ -1833,6 +1876,13 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
   // Split into two groups: original and active relationships
   const originalRelationships = allRelationships.filter(r => r.is_original);
   const relationshipsToInsert = allRelationships.filter(r => !r.is_original && r.status);
+  
+  console.log(`📊 Relationship Processing Summary:`);
+  console.log(`  📋 Total rows processed: ${rows.length}`);
+  console.log(`  🔗 Valid relationships found: ${allRelationships.length}`);
+  console.log(`  📝 Original relationships: ${originalRelationships.length}`);
+  console.log(`  📝 Active relationships (must_keep, etc.): ${relationshipsToInsert.length}`);
+  console.log(`  ❌ Filtered out (name mismatches): ${rows.length - allRelationships.length}`);
 
   // Insert active relationships (exclude is_original field from database insert)
   let imported = 0;
@@ -1854,7 +1904,13 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
         .insert(relChunks[i]);
 
       if (error) {
-        errors.push({ batch: i + 1, error });
+        const errorMessage = error.code === '23505' 
+          ? `Duplicate key constraint violation in batch ${i + 1}: ${error.message}`
+          : error.code === '409'
+          ? `Conflict error in batch ${i + 1}: Duplicate relationships detected - ${error.message}`
+          : `Batch ${i + 1} failed: ${error.message}`;
+        errors.push({ batch: i + 1, error: errorMessage });
+        console.log(`❌ Relationship batch ${i + 1} failed:`, error);
       } else {
         imported += relChunks[i].length;
       }
@@ -1879,7 +1935,13 @@ async function importRelationshipMapAdd(rows: RelRow[], userId?: string) {
         });
 
       if (error) {
-        errors.push({ batch: i + 1, error: `Failed to add original relationships: ${error.message}` });
+        const errorMessage = error.code === '23505' 
+          ? `Duplicate key constraint violation in original relationships batch ${i + 1}: ${error.message}`
+          : error.code === '409'
+          ? `Conflict error in original relationships batch ${i + 1}: Duplicate relationships detected - ${error.message}`
+          : `Failed to add original relationships batch ${i + 1}: ${error.message}`;
+        errors.push({ batch: i + 1, error: errorMessage });
+        console.log(`❌ Original relationships batch ${i + 1} failed:`, error);
       }
     }
   }
@@ -2894,6 +2956,26 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
           throw new Error(`Failed to truncate accounts table: ${accountTruncateError.message}`);
         }
         
+        // Truncate relationship tables to prevent conflicts
+        onProgress?.("🗑️ Truncating relationship tables...");
+        const { error: relationshipTruncateError } = await supabase
+          .from("relationship_maps")
+          .delete()
+          .neq("account_id", "00000000-0000-0000-0000-000000000000");
+        
+        if (relationshipTruncateError) {
+          throw new Error(`Failed to truncate relationship_maps table: ${relationshipTruncateError.message}`);
+        }
+        
+        const { error: originalRelationshipTruncateError } = await supabase
+          .from("original_relationships")
+          .delete()
+          .neq("account_id", "00000000-0000-0000-0000-000000000000");
+        
+        if (originalRelationshipTruncateError) {
+          throw new Error(`Failed to truncate original_relationships table: ${originalRelationshipTruncateError.message}`);
+        }
+        
         const truncateDuration = Date.now() - truncateStart;
         onProgress?.(`⏱️ Truncate completed in ${truncateDuration}ms`);
 
@@ -3161,8 +3243,10 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
       Object.entries(results).forEach(([key, result]: [string, any]) => {
         if (result.errors.length > 0) {
           onProgress?.(`  ❌ ${key}: ${result.errors.length} errors`);
-          result.errors.forEach((error: string) => {
-            onProgress?.(`    - ${error}`);
+          result.errors.forEach((error: any) => {
+            const errorMessage = typeof error === 'string' ? error : 
+              error?.message || error?.error || JSON.stringify(error);
+            onProgress?.(`    - ${errorMessage}`);
           });
         }
       });
