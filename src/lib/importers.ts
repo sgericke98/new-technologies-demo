@@ -627,6 +627,7 @@ type SellerRow = {
   longitude: number | null;
   hire_date?: string | null;
   seniority_type?: "junior" | "senior" | null;
+  book_finalized?: boolean | null;
 };
 
 export async function importSellers(file: File, userId?: string) {
@@ -721,6 +722,7 @@ export async function importSellers(file: File, userId?: string) {
         tenure_months: r.hire_date ? calculateTenureMonths(r.hire_date) : null,
         seniority_type: r.seniority_type || null,
         manager_id: null, // Will be assigned via Manager_Team tab
+        book_finalized: r.book_finalized || false, // Preserve book_finalized status
       };
     });
 
@@ -1738,6 +1740,7 @@ async function importSellersAdd(rows: SellerRow[], userId?: string) {
         tenure_months: r.hire_date ? calculateTenureMonths(r.hire_date) : null,
         seniority_type: r.seniority_type || null,
         manager_id: null, // Will be assigned later via ManagerTeam import
+        book_finalized: r.book_finalized || false, // Preserve book_finalized status
       };
     });
 
@@ -2670,7 +2673,8 @@ export function downloadComprehensiveTemplate() {
       city: "New York",
       country: "US", // ISO code - lat/lng will be auto-mapped
       hire_date: "01/15/22", // Will be converted to tenure_months automatically
-      seniority_type: "senior" // junior or senior
+      seniority_type: "senior", // junior or senior
+      book_finalized: false // Whether the seller's book is finalized
     },
     {
       seller_name: "Sarah Johnson",
@@ -2681,7 +2685,8 @@ export function downloadComprehensiveTemplate() {
       city: "San Francisco",
       country: "US", // ISO code - lat/lng will be auto-mapped
       hire_date: "07/01/22", // Will be converted to tenure_months automatically
-      seniority_type: "junior" // junior or senior
+      seniority_type: "junior", // junior or senior
+      book_finalized: true // Whether the seller's book is finalized
     }
   ];
   
@@ -2767,7 +2772,7 @@ export function downloadComprehensiveTemplate() {
     [""],
     ["REQUIRED FIELDS:"],
     ["• Accounts: account_name, size, current_division"],
-    ["• Sellers: seller_name, division, size, hire_date"],
+    ["• Sellers: seller_name, division, size, hire_date, book_finalized (optional)"],
     ["• Managers: manager_name, manager_email"],
     ["• Relationship_Map: account_name, seller_name, status"],
     ["• Manager_Team: manager_name, seller_name, is_primary (optional)"],
@@ -2789,6 +2794,7 @@ export function downloadComprehensiveTemplate() {
     ["• Use hire_date in MM/DD/YY format (e.g., '01/15/22') - tenure_months calculated automatically"],
     ["• Use seniority_type: 'junior' or 'senior' - determines revenue targets and account limits"],
     ["• is_primary: TRUE for primary manager, FALSE for secondary managers (defaults to TRUE if not specified)"],
+    ["• book_finalized: TRUE or FALSE - indicates if seller's book is finalized (defaults to FALSE if not specified)"],
     ["• Latitude/longitude will be automatically mapped from country/state codes"]
   ];
   
@@ -3027,7 +3033,32 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
     // 3. Import Sellers
     if (wb.SheetNames.includes("Sellers")) {
       try {
-        // Truncate sellers table first
+        // BACKUP: Save chat messages before truncating sellers (CASCADE DELETE will remove them)
+        onProgress?.("💬 Backing up chat messages before seller truncation...");
+        const chatBackupStart = Date.now();
+        
+        const { data: chatMessages, error: chatBackupError } = await (supabase as any)
+          .from('seller_chat_messages')
+          .select(`
+            id,
+            seller_id,
+            user_id,
+            content,
+            role,
+            created_at,
+            updated_at,
+            sellers!inner(name)
+          `);
+        
+        if (chatBackupError) {
+          onProgress?.(`⚠️ Warning: Could not backup chat messages: ${chatBackupError.message}`);
+        } else {
+          const chatBackupDuration = Date.now() - chatBackupStart;
+          onProgress?.(`💾 Chat backup completed in ${chatBackupDuration}ms - ${chatMessages?.length || 0} messages backed up`);
+        }
+
+        // Truncate sellers table first (this will CASCADE DELETE chat messages)
+        onProgress?.("🗑️ Truncating sellers table (chat messages will be temporarily removed)...");
         const { error: truncateError } = await supabase
           .from("sellers")
           .delete()
@@ -3047,6 +3078,58 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
           
           await importSellers(tempFile, userId);
           results.sellers.imported = sellersData.length;
+          
+          // RESTORE: Restore chat messages after sellers are imported
+          if (chatMessages && chatMessages.length > 0) {
+            onProgress?.("💬 Restoring chat messages after seller import...");
+            const chatRestoreStart = Date.now();
+            
+            let restoredCount = 0;
+            let failedCount = 0;
+            
+            for (const chat of chatMessages) {
+              try {
+                // Find the new seller by name
+                const { data: newSeller, error: sellerLookupError } = await supabase
+                  .from('sellers')
+                  .select('id')
+                  .eq('name', chat.sellers.name)
+                  .single();
+                
+                if (sellerLookupError || !newSeller) {
+                  onProgress?.(`⚠️ Could not find seller "${chat.sellers.name}" for chat message restoration`);
+                  failedCount++;
+                  continue;
+                }
+                
+                // Restore the chat message with the new seller_id
+                const { error: restoreError } = await (supabase as any)
+                  .from('seller_chat_messages')
+                  .insert({
+                    seller_id: newSeller.id, // New seller ID
+                    user_id: chat.user_id,   // Same user ID
+                    content: chat.content,   // Same content
+                    role: chat.role,         // Same role
+                    created_at: chat.created_at, // Preserve original timestamp
+                    updated_at: chat.updated_at  // Preserve original timestamp
+                    // id will be auto-generated
+                  });
+                
+                if (restoreError) {
+                  onProgress?.(`⚠️ Failed to restore chat message for "${chat.sellers.name}": ${restoreError.message}`);
+                  failedCount++;
+                } else {
+                  restoredCount++;
+                }
+              } catch (error) {
+                onProgress?.(`⚠️ Error restoring chat message for "${chat.sellers.name}": ${error}`);
+                failedCount++;
+              }
+            }
+            
+            const chatRestoreDuration = Date.now() - chatRestoreStart;
+            onProgress?.(`✅ Chat restore completed in ${chatRestoreDuration}ms - ${restoredCount} restored, ${failedCount} failed`);
+          }
         } else {
         }
       } catch (error) {
