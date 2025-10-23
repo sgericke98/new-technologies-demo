@@ -28,6 +28,7 @@ import {
   validateComprehensiveTemplate,
   readSheet,
   exportCompleteAccountsWithAssignedSellers,
+  exportComprehensiveData,
 } from '@/lib/importers';
 import { PageLoader } from '@/components/ui/loader';
 import { useRealtimeSettings } from '@/hooks/use-realtime-settings';
@@ -695,7 +696,7 @@ export default function AdminSettingsPage() {
     }
   }
 
-  // Export handler
+  // Export handler for complete accounts
   const handleExportCompleteAccounts = async () => {
     if (!isMasterAdmin) {
       toast({
@@ -726,6 +727,44 @@ export default function AdminSettingsPage() {
       toast({
         title: 'Export Failed',
         description: `Failed to export accounts: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Export handler for comprehensive data (all tables)
+  const handleExportComprehensiveData = async () => {
+    if (!isMasterAdmin) {
+      toast({
+        title: 'Access Denied',
+        description: 'You do not have permission to export data.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const result = await exportComprehensiveData();
+      
+      if (result) {
+        toast({
+          title: 'Comprehensive Export Complete',
+          description: `Successfully exported all data tables (Accounts, Sellers, Managers, Relationships, Manager Teams, and Reference tables).`,
+        });
+      } else {
+        toast({
+          title: 'No Data Found',
+          description: 'No data was found to export.',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      toast({
+        title: 'Export Failed',
+        description: `Failed to export comprehensive data: ${error instanceof Error ? error.message : 'Unknown error'}`,
         variant: 'destructive',
       });
     } finally {
@@ -1542,6 +1581,64 @@ export default function AdminSettingsPage() {
                 </ul>
                 <p className="mt-2 text-xs text-blue-700">
                   <strong>Note:</strong> Includes ALL accounts - those with assigned sellers and those without (blank seller columns)
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 5. COMPREHENSIVE EXPORT MODE - Export All Tables (Like Replace Mode) */}
+        <Card className="bg-white/80 backdrop-blur-sm border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-3 text-lg">
+              <div className="p-2 bg-green-100 rounded-lg">
+                <Download className="h-5 w-5 text-green-600" />
+              </div>
+              5. COMPREHENSIVE EXPORT MODE - Export All Tables (Like Replace Mode)
+            </CardTitle>
+            <CardDescription className="text-slate-600">
+              Export all data tables in separate sheets, matching the comprehensive import template structure. Includes Accounts, Sellers, Managers, Relationships, Manager Teams, and Reference tables.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 bg-green-100 rounded-lg">
+                  <Database className="h-5 w-5 text-green-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-green-900">Comprehensive Data Export</h3>
+                  <p className="text-sm text-green-700">Export all data tables in separate sheets (like replace mode template)</p>
+                </div>
+              </div>
+              
+              <div className="flex gap-3 mb-4">
+                <Button
+                  onClick={handleExportComprehensiveData}
+                  disabled={exporting}
+                  className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <Download className="h-4 w-4" />
+                  {exporting ? "Exporting..." : "Export All Tables"}
+                </Button>
+              </div>
+              
+              <div className="text-sm text-green-800">
+            <p className="font-medium mb-2">Exports the following tables:</p>
+            <ul className="list-disc list-inside space-y-1 text-xs">
+              <li><strong>Accounts:</strong> All account records with revenue data</li>
+              <li><strong>Sellers:</strong> All seller records with manager assignments</li>
+              <li><strong>Managers:</strong> All manager records</li>
+              <li><strong>Relationship_Map:</strong> Account-seller relationships with status</li>
+              <li><strong>Manager_Team:</strong> Manager-seller team assignments</li>
+              <li><strong>Original_Relationships:</strong> Original account-seller relationships</li>
+              <li><strong>Chat_Messages:</strong> All chat messages between managers and sellers</li>
+              <li><strong>Country_Reference:</strong> Country codes reference</li>
+              <li><strong>State_Reference:</strong> State codes reference</li>
+              <li><strong>Instructions:</strong> Export instructions and field descriptions</li>
+            </ul>
+                <p className="mt-2 text-xs text-green-700">
+                  <strong>Perfect for:</strong> Complete data backup, migration, or creating a comprehensive import template
                 </p>
               </div>
             </div>

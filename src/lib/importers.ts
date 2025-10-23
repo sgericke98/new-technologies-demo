@@ -3398,6 +3398,633 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
 // ========== EXPORT FUNCTIONS ==========
 
 /**
+ * Export comprehensive data with all tables (like replace mode template)
+ * This exports all data tables in separate sheets, matching the comprehensive import template structure
+ */
+export async function exportComprehensiveData() {
+  try {
+    const wb = XLSX.utils.book_new();
+    
+    // 1. EXPORT ACCOUNTS TABLE
+    console.log('Exporting accounts table...');
+    const accountsData = await exportAccountsTable();
+    console.log('Accounts data:', accountsData?.length || 0, 'records');
+    if (accountsData && accountsData.length > 0) {
+      const accountsWs = XLSX.utils.json_to_sheet(accountsData);
+      XLSX.utils.book_append_sheet(wb, accountsWs, "Accounts");
+    }
+    
+    // 2. EXPORT SELLERS TABLE
+    console.log('Exporting sellers table...');
+    const sellersData = await exportSellersTable();
+    console.log('Sellers data:', sellersData?.length || 0, 'records');
+    if (sellersData && sellersData.length > 0) {
+      const sellersWs = XLSX.utils.json_to_sheet(sellersData);
+      XLSX.utils.book_append_sheet(wb, sellersWs, "Sellers");
+    }
+    
+    // 3. EXPORT MANAGERS TABLE
+    console.log('Exporting managers table...');
+    const managersData = await exportManagersTable();
+    console.log('Managers data:', managersData?.length || 0, 'records');
+    if (managersData && managersData.length > 0) {
+      const managersWs = XLSX.utils.json_to_sheet(managersData);
+      XLSX.utils.book_append_sheet(wb, managersWs, "Managers");
+    }
+    
+    // 4. EXPORT RELATIONSHIP_MAP TABLE
+    console.log('Exporting relationship map table...');
+    const relationshipData = await exportRelationshipMapTable();
+    console.log('Relationship data:', relationshipData?.length || 0, 'records');
+    if (relationshipData && relationshipData.length > 0) {
+      const relationshipWs = XLSX.utils.json_to_sheet(relationshipData);
+      XLSX.utils.book_append_sheet(wb, relationshipWs, "Relationship_Map");
+    }
+    
+    // 5. EXPORT MANAGER_TEAM TABLE
+    console.log('Exporting manager team table...');
+    const managerTeamData = await exportManagerTeamTable();
+    console.log('Manager team data:', managerTeamData?.length || 0, 'records');
+    if (managerTeamData && managerTeamData.length > 0) {
+      const managerTeamWs = XLSX.utils.json_to_sheet(managerTeamData);
+      XLSX.utils.book_append_sheet(wb, managerTeamWs, "Manager_Team");
+    }
+
+    // 6. EXPORT ORIGINAL RELATIONSHIPS TABLE
+    console.log('Exporting original relationships table...');
+    const originalRelationshipsData = await exportOriginalRelationshipsTable();
+    console.log('Original relationships data:', originalRelationshipsData?.length || 0, 'records');
+    if (originalRelationshipsData && originalRelationshipsData.length > 0) {
+      const originalRelationshipsWs = XLSX.utils.json_to_sheet(originalRelationshipsData);
+      XLSX.utils.book_append_sheet(wb, originalRelationshipsWs, "Original_Relationships");
+    }
+
+    // 7. EXPORT CHAT MESSAGES TABLE
+    console.log('Exporting chat messages table...');
+    const chatMessagesData = await exportChatMessagesTable();
+    console.log('Chat messages data:', chatMessagesData?.length || 0, 'records');
+    if (chatMessagesData && chatMessagesData.length > 0) {
+      const chatMessagesWs = XLSX.utils.json_to_sheet(chatMessagesData);
+      XLSX.utils.book_append_sheet(wb, chatMessagesWs, "Chat_Messages");
+    }
+    
+    // 8. ADD REFERENCE TABLES
+    const countryReferenceData = getCountryReferenceData();
+    const countryWs = XLSX.utils.json_to_sheet(countryReferenceData);
+    XLSX.utils.book_append_sheet(wb, countryWs, "Country_Reference");
+    
+    const stateReferenceData = getStateReferenceData();
+    const stateWs = XLSX.utils.json_to_sheet(stateReferenceData);
+    XLSX.utils.book_append_sheet(wb, stateWs, "State_Reference");
+    
+    // 7. ADD INSTRUCTIONS TAB
+    const instructionsData = [
+      ["BAIN DATA EXPORT - INSTRUCTIONS"],
+      [""],
+      ["This export contains all data tables from your system:"],
+      [""],
+      ["• Accounts: All account records with revenue data"],
+      ["• Sellers: All seller records with manager assignments"],
+      ["• Managers: All manager records"],
+      ["• Relationship_Map: Account-seller relationships with status"],
+      ["• Manager_Team: Manager-seller team assignments"],
+      [""],
+      ["FIELD DESCRIPTIONS:"],
+      [""],
+      ["ACCOUNTS:"],
+      ["• account_name: Company name"],
+      ["• industry: Business industry"],
+      ["• size: 'enterprise' or 'midmarket'"],
+      ["• tier: Account tier level"],
+      ["• type: Account type classification"],
+      ["• state: US state code"],
+      ["• city: City name"],
+      ["• country: ISO country code"],
+      ["• current_division: 'ESG', 'GDT', 'GVC', 'MSG_US'"],
+      ["• revenue_ESG/GDT/GVC/MSG_US: Revenue by division"],
+      [""],
+      ["SELLERS:"],
+      ["• seller_name: Seller full name"],
+      ["• division: 'ESG', 'GDT', 'GVC', 'MSG_US'"],
+      ["• size: 'enterprise' or 'midmarket'"],
+      ["• industry_specialty: Specialized industry"],
+      ["• state: US state code"],
+      ["• city: City name"],
+      ["• country: ISO country code"],
+      ["• manager_email: Manager's email address"],
+      ["• tenure_months: Number of months with company"],
+      ["• seniority_type: 'junior' or 'senior'"],
+      ["• book_finalized: TRUE or FALSE"],
+      [""],
+      ["MANAGERS:"],
+      ["• manager_name: Manager full name"],
+      ["• manager_email: Manager's email address"],
+      [""],
+      ["RELATIONSHIP_MAP:"],
+      ["• account_name: Must match Accounts table"],
+      ["• seller_name: Must match Sellers table"],
+      ["• status: 'original', 'must_keep', 'for_discussion', 'to_be_peeled'"],
+      [""],
+      ["MANAGER_TEAM:"],
+      ["• manager_name: Must match Managers table"],
+      ["• seller_name: Must match Sellers table"],
+      ["• is_primary: TRUE or FALSE"],
+      [""],
+      ["ORIGINAL_RELATIONSHIPS:"],
+      ["• account_name: Must match Accounts table"],
+      ["• seller_name: Must match Sellers table"],
+      ["• created_at: When the original relationship was created"],
+      [""],
+      ["CHAT_MESSAGES:"],
+      ["• seller_name: Must match Sellers table"],
+      ["• user_name: Name of the user who sent the message"],
+      ["• user_email: Email of the user who sent the message"],
+      ["• content: The message content"],
+      ["• role: 'manager' or 'admin'"],
+      ["• created_at: When the message was created"],
+      ["• updated_at: When the message was last updated"],
+      [""],
+      ["IMPORTANT NOTES:"],
+      ["• All names must match exactly between tables"],
+      ["• Use ISO country codes (see Country_Reference tab)"],
+      ["• Use state codes (see State_Reference tab)"],
+      ["• Revenue values are in dollars"],
+      ["• Tenure is in months (integer)"]
+    ];
+    
+    const instructionsWs = XLSX.utils.json_to_sheet(instructionsData);
+    XLSX.utils.book_append_sheet(wb, instructionsWs, "Instructions");
+    
+    // Generate Excel file
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    
+    // Create blob and download
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Complete_Data_Export_${new Date().toISOString().split('T')[0]}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    
+    return { exported: 'all_tables', filename: link.download };
+    
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * Export accounts table with all fields
+ */
+async function exportAccountsTable() {
+  try {
+    let allAccounts: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const { data: accountsBatch, error } = await supabase
+        .from('accounts')
+        .select(`
+          name,
+          industry,
+          size,
+          tier,
+          type,
+          state,
+          city,
+          country,
+          current_division,
+          account_revenues (
+            revenue_esg,
+            revenue_gdt,
+            revenue_gvc,
+            revenue_msg_us
+          )
+        `)
+        .range(from, from + limit - 1)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        throw new Error(`Failed to fetch accounts: ${error.message}`);
+      }
+
+      if (accountsBatch && accountsBatch.length > 0) {
+        allAccounts = allAccounts.concat(accountsBatch);
+        from += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return allAccounts.map((account: any) => {
+      const revenue = account.account_revenues;
+      return {
+        account_name: account.name,
+        industry: account.industry,
+        size: account.size,
+        tier: account.tier,
+        type: account.type,
+        state: account.state,
+        city: account.city,
+        country: account.country,
+        current_division: account.current_division,
+        revenue_ESG: revenue?.revenue_esg || 0,
+        revenue_GDT: revenue?.revenue_gdt || 0,
+        revenue_GVC: revenue?.revenue_gvc || 0,
+        revenue_MSG_US: revenue?.revenue_msg_us || 0
+      };
+    });
+  } catch (error) {
+    console.error('Error exporting accounts:', error);
+    return [];
+  }
+}
+
+/**
+ * Export sellers table with all fields
+ */
+async function exportSellersTable() {
+  try {
+    console.log('Starting sellers export...');
+    let allSellers: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+      console.log(`Fetching sellers batch from ${from} to ${from + limit - 1}`);
+      const { data: sellersBatch, error } = await supabase
+        .from('sellers')
+        .select(`
+          name,
+          division,
+          size,
+          industry_specialty,
+          state,
+          city,
+          country,
+          manager_id,
+          tenure_months,
+          seniority_type,
+          book_finalized,
+          managers (
+            user_id,
+            profiles (
+              email
+            )
+          )
+        `)
+        .range(from, from + limit - 1)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching sellers:', error);
+        throw new Error(`Failed to fetch sellers: ${error.message}`);
+      }
+
+      console.log(`Fetched ${sellersBatch?.length || 0} sellers in this batch`);
+      if (sellersBatch && sellersBatch.length > 0) {
+        allSellers = allSellers.concat(sellersBatch);
+        from += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    console.log(`Total sellers fetched: ${allSellers.length}`);
+    const result = allSellers.map((seller: any) => {
+      const manager = seller.managers;
+      return {
+        seller_name: seller.name,
+        division: seller.division,
+        size: seller.size,
+        industry_specialty: seller.industry_specialty,
+        state: seller.state,
+        city: seller.city,
+        country: seller.country,
+        manager_email: manager?.profiles?.email || '',
+        tenure_months: seller.tenure_months,
+        seniority_type: seller.seniority_type,
+        book_finalized: seller.book_finalized
+      };
+    });
+    console.log(`Mapped ${result.length} sellers for export`);
+    return result;
+  } catch (error) {
+    console.error('Error exporting sellers:', error);
+    return [];
+  }
+}
+
+/**
+ * Export managers table with all fields
+ */
+async function exportManagersTable() {
+  try {
+    console.log('Starting managers export...');
+    let allManagers: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+      console.log(`Fetching managers batch from ${from} to ${from + limit - 1}`);
+      const { data: managersBatch, error } = await supabase
+        .from('managers')
+        .select(`
+          name,
+          user_id,
+          profiles (
+            email
+          )
+        `)
+        .range(from, from + limit - 1)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching managers:', error);
+        throw new Error(`Failed to fetch managers: ${error.message}`);
+      }
+
+      console.log(`Fetched ${managersBatch?.length || 0} managers in this batch`);
+      if (managersBatch && managersBatch.length > 0) {
+        allManagers = allManagers.concat(managersBatch);
+        from += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    console.log(`Total managers fetched: ${allManagers.length}`);
+    const result = allManagers.map((manager: any) => ({
+      manager_name: manager.name,
+      manager_email: manager.profiles?.email || ''
+    }));
+    console.log(`Mapped ${result.length} managers for export`);
+    return result;
+  } catch (error) {
+    console.error('Error exporting managers:', error);
+    return [];
+  }
+}
+
+/**
+ * Export relationship map table
+ */
+async function exportRelationshipMapTable() {
+  try {
+    console.log('Starting relationship map export...');
+    let allRelationships: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+      console.log(`Fetching relationships batch from ${from} to ${from + limit - 1}`);
+      const { data: relationshipsBatch, error } = await supabase
+        .from('relationship_maps')
+        .select(`
+          status,
+          accounts (
+            name
+          ),
+          sellers (
+            name
+          )
+        `)
+        .range(from, from + limit - 1)
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching relationships:', error);
+        throw new Error(`Failed to fetch relationships: ${error.message}`);
+      }
+
+      console.log(`Fetched ${relationshipsBatch?.length || 0} relationships in this batch`);
+      if (relationshipsBatch && relationshipsBatch.length > 0) {
+        allRelationships = allRelationships.concat(relationshipsBatch);
+        from += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    console.log(`Total relationships fetched: ${allRelationships.length}`);
+    const result = allRelationships.map((relationship: any) => ({
+      account_name: relationship.accounts?.name || '',
+      seller_name: relationship.sellers?.name || '',
+      status: relationship.status
+    }));
+    console.log(`Mapped ${result.length} relationships for export`);
+    return result;
+  } catch (error) {
+    console.error('Error exporting relationships:', error);
+    return [];
+  }
+}
+
+/**
+ * Export manager team table
+ */
+async function exportManagerTeamTable() {
+  try {
+    console.log('Starting manager team export...');
+    let allManagerTeams: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+      console.log(`Fetching manager teams batch from ${from} to ${from + limit - 1}`);
+      const { data: managerTeamsBatch, error } = await supabase
+        .from('seller_managers')
+        .select(`
+          is_primary,
+          managers (
+            name
+          ),
+          sellers (
+            name
+          )
+        `)
+        .range(from, from + limit - 1)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching manager teams:', error);
+        throw new Error(`Failed to fetch manager teams: ${error.message}`);
+      }
+
+      console.log(`Fetched ${managerTeamsBatch?.length || 0} manager teams in this batch`);
+      if (managerTeamsBatch && managerTeamsBatch.length > 0) {
+        allManagerTeams = allManagerTeams.concat(managerTeamsBatch);
+        from += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    console.log(`Total manager teams fetched: ${allManagerTeams.length}`);
+    const result = allManagerTeams.map((team: any) => ({
+      manager_name: team.managers?.name || '',
+      seller_name: team.sellers?.name || '',
+      is_primary: team.is_primary
+    }));
+    console.log(`Mapped ${result.length} manager teams for export`);
+    return result;
+  } catch (error) {
+    console.error('Error exporting manager teams:', error);
+    return [];
+  }
+}
+
+/**
+ * Export original relationships table
+ */
+async function exportOriginalRelationshipsTable() {
+  try {
+    console.log('Starting original relationships export...');
+    let allOriginalRelationships: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+      console.log(`Fetching original relationships batch from ${from} to ${from + limit - 1}`);
+      const { data: originalRelationshipsBatch, error } = await supabase
+        .from('original_relationships')
+        .select(`
+          created_at,
+          accounts (
+            name
+          ),
+          sellers (
+            name
+          )
+        `)
+        .range(from, from + limit - 1)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching original relationships:', error);
+        throw new Error(`Failed to fetch original relationships: ${error.message}`);
+      }
+
+      console.log(`Fetched ${originalRelationshipsBatch?.length || 0} original relationships in this batch`);
+      if (originalRelationshipsBatch && originalRelationshipsBatch.length > 0) {
+        allOriginalRelationships = allOriginalRelationships.concat(originalRelationshipsBatch);
+        from += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    console.log(`Total original relationships fetched: ${allOriginalRelationships.length}`);
+    const result = allOriginalRelationships.map((relationship: any) => ({
+      account_name: relationship.accounts?.name || '',
+      seller_name: relationship.sellers?.name || '',
+      created_at: relationship.created_at
+    }));
+    console.log(`Mapped ${result.length} original relationships for export`);
+    return result;
+  } catch (error) {
+    console.error('Error exporting original relationships:', error);
+    return [];
+  }
+}
+
+/**
+ * Export chat messages table
+ */
+async function exportChatMessagesTable() {
+  try {
+    console.log('Starting chat messages export...');
+    let allChatMessages: any[] = [];
+    let from = 0;
+    const limit = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+      console.log(`Fetching chat messages batch from ${from} to ${from + limit - 1}`);
+      // Use raw SQL since seller_chat_messages is not in TypeScript types
+      const { data: chatMessagesBatch, error } = await supabase
+        .from('seller_chat_messages' as any)
+        .select(`
+          user_id,
+          content,
+          role,
+          created_at,
+          updated_at,
+          sellers (
+            name
+          )
+        `)
+        .range(from, from + limit - 1)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching chat messages:', error);
+        throw new Error(`Failed to fetch chat messages: ${error.message}`);
+      }
+
+      console.log(`Fetched ${chatMessagesBatch?.length || 0} chat messages in this batch`);
+      if (chatMessagesBatch && chatMessagesBatch.length > 0) {
+        allChatMessages = allChatMessages.concat(chatMessagesBatch);
+        from += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    console.log(`Total chat messages fetched: ${allChatMessages.length}`);
+    console.log('Sample chat message:', allChatMessages[0]); // Debug: show first message structure
+    
+    // Get user information separately since there's no direct relationship
+    // Filter out messages with undefined user_id
+    const validUserIds = Array.from(new Set(
+      allChatMessages
+        .map((msg: any) => msg.user_id)
+        .filter((id: any) => id !== undefined && id !== null)
+    ));
+    
+    console.log(`Found ${validUserIds.length} valid user IDs:`, validUserIds);
+    
+    let profileMap = new Map();
+    if (validUserIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, name, email')
+        .in('id', validUserIds);
+      
+      profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+    }
+    
+    const result = allChatMessages.map((message: any) => {
+      const profile = message.user_id ? profileMap.get(message.user_id) : null;
+      return {
+        seller_name: message.sellers?.name || '',
+        user_name: profile?.name || 'Unknown User',
+        user_email: profile?.email || 'unknown@example.com',
+        content: message.content,
+        role: message.role,
+        created_at: message.created_at,
+        updated_at: message.updated_at
+      };
+    });
+    console.log(`Mapped ${result.length} chat messages for export`);
+    return result;
+  } catch (error) {
+    console.error('Error exporting chat messages:', error);
+    return [];
+  }
+}
+
+/**
  * Export complete accounts table with assigned sellers (all statuses)
  * This exports all account fields plus the assigned seller information for all relationship statuses
  * Includes accounts without assigned sellers (with blank seller/manager columns)
