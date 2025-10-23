@@ -1597,7 +1597,7 @@ export default function AdminSettingsPage() {
               5. COMPREHENSIVE EXPORT MODE - Export All Tables (Like Replace Mode)
             </CardTitle>
             <CardDescription className="text-slate-600">
-              Export all data tables in separate sheets, matching the comprehensive import template structure. Includes Accounts, Sellers, Managers, Relationships, Manager Teams, and Reference tables.
+              Export all data tables in separate sheets, matching the comprehensive import template structure. Includes Accounts, Sellers, Managers, Relationships, Manager Teams, Chat Messages, and Reference tables.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">

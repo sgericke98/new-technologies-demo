@@ -1149,6 +1149,16 @@ type ManagerTeamRow = {
   is_primary?: boolean;
 };
 
+type ChatMessageRow = {
+  seller_name: string;
+  user_name: string;
+  user_email: string;
+  content: string;
+  role: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export async function importManagerTeam(file: File, userId?: string) {
   const wb = await readSheet(file);
   const rows = sheetToJson<ManagerTeamRow>(wb);
@@ -1323,6 +1333,132 @@ export async function importManagerTeam(file: File, userId?: string) {
     
     await logAuditEvent(auditData);
   }
+}
+
+// ========== Chat Messages Import ==========
+export async function importChatMessages(file: File, userId?: string) {
+  const wb = await readSheet(file);
+  const rows = sheetToJson<ChatMessageRow>(wb);
+  
+  if (rows.length === 0) {
+    throw new Error("No chat message data found in file");
+  }
+
+  console.log(`Processing ${rows.length} chat messages...`);
+
+  // Get all unique seller names and user emails to resolve IDs
+  const sellerNames = Array.from(new Set(rows.map(row => row.seller_name)));
+  const userEmails = Array.from(new Set(rows.map(row => row.user_email)));
+
+  // Fetch seller IDs
+  const { data: sellers, error: sellersError } = await supabase
+    .from('sellers')
+    .select('id, name')
+    .in('name', sellerNames);
+
+  if (sellersError) {
+    throw new Error(`Failed to fetch sellers: ${sellersError.message}`);
+  }
+
+  // Fetch user IDs from profiles
+  const { data: profiles, error: profilesError } = await supabase
+    .from('profiles')
+    .select('id, email')
+    .in('email', userEmails);
+
+  if (profilesError) {
+    throw new Error(`Failed to fetch profiles: ${profilesError.message}`);
+  }
+
+  // Create lookup maps
+  const sellerMap = new Map(sellers?.map(s => [s.name, s.id]) || []);
+  const profileMap = new Map(profiles?.map(p => [p.email, p.id]) || []);
+
+  // Process chat messages
+  const chatMessages = [];
+  const errors = [];
+
+  for (const row of rows) {
+    try {
+      const sellerId = sellerMap.get(row.seller_name);
+      const userId = profileMap.get(row.user_email);
+
+      if (!sellerId) {
+        errors.push(`Seller not found: ${row.seller_name}`);
+        continue;
+      }
+
+      if (!userId) {
+        errors.push(`User not found: ${row.user_email}`);
+        continue;
+      }
+
+      chatMessages.push({
+        seller_id: sellerId,
+        user_id: userId,
+        content: row.content,
+        role: row.role,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      });
+    } catch (error) {
+      errors.push(`Error processing chat message: ${error}`);
+    }
+  }
+
+  if (chatMessages.length === 0) {
+    throw new Error("No valid chat messages to import");
+  }
+
+  // Insert chat messages in batches
+  const batchSize = 100;
+  let imported = 0;
+
+  for (let i = 0; i < chatMessages.length; i += batchSize) {
+    const batch = chatMessages.slice(i, i + batchSize);
+    
+    const { error: insertError } = await supabase
+      .from('seller_chat_messages' as any)
+      .insert(batch);
+
+    if (insertError) {
+      throw new Error(`Failed to insert chat messages batch: ${insertError.message}`);
+    }
+
+    imported += batch.length;
+    console.log(`Imported ${imported}/${chatMessages.length} chat messages...`);
+  }
+
+  // Log audit event
+  if (userId) {
+    const auditData = createAuditLogData(
+      userId,
+      'data_import',
+      'CHAT_MESSAGES',
+      undefined,
+      null,
+      {
+        import_type: 'chat_messages',
+        file_name: file.name,
+        file_size: file.size,
+        imported_count: imported,
+        error_count: errors.length
+      }
+    );
+    
+    await logAuditEvent(auditData);
+  }
+
+  console.log(`✅ Chat messages import completed: ${imported} imported, ${errors.length} errors`);
+  
+  if (errors.length > 0) {
+    console.warn('Chat messages import errors:', errors);
+  }
+
+  return {
+    imported,
+    errors
+  };
 }
 
 // ========== ADD Mode Import Functions (Insert New Records, Keep Existing) ==========
@@ -2752,7 +2888,32 @@ export function downloadComprehensiveTemplate() {
   const managerTeamWs = XLSX.utils.json_to_sheet(managerTeamData);
   XLSX.utils.book_append_sheet(wb, managerTeamWs, "Manager_Team");
   
-  // 6. INSTRUCTIONS TAB
+  // 6. CHAT_MESSAGES TAB
+  const chatMessagesData = [
+    {
+      seller_name: "John Smith",
+      user_name: "Jane Manager",
+      user_email: "jane.manager@company.com",
+      content: "Great work on the Example Corp account this quarter!",
+      role: "manager",
+      created_at: "2024-01-15T10:30:00Z",
+      updated_at: "2024-01-15T10:30:00Z"
+    },
+    {
+      seller_name: "Sarah Johnson",
+      user_name: "Mike Director",
+      user_email: "mike.director@company.com",
+      content: "Let's discuss the Tech Solutions Inc strategy for next month.",
+      role: "manager",
+      created_at: "2024-01-16T14:45:00Z",
+      updated_at: "2024-01-16T14:45:00Z"
+    }
+  ];
+  
+  const chatMessagesWs = XLSX.utils.json_to_sheet(chatMessagesData);
+  XLSX.utils.book_append_sheet(wb, chatMessagesWs, "Chat_Messages");
+  
+  // 7. INSTRUCTIONS TAB
   const instructionsData = [
     ["BAIN DATA IMPORT TEMPLATE - INSTRUCTIONS"],
     [""],
@@ -2762,6 +2923,7 @@ export function downloadComprehensiveTemplate() {
     ["3. Sellers - Import sellers (managers must exist first)"],
     ["4. Relationship_Map - Import account-seller relationships"],
     ["5. Manager_Team - Assign sellers to managers"],
+    ["6. Chat_Messages - Import chat messages between managers and sellers"],
     [""],
     ["TAB DESCRIPTIONS:"],
     ["• Accounts: Company information, location, division, and revenue data"],
@@ -2769,6 +2931,7 @@ export function downloadComprehensiveTemplate() {
     ["• Managers: Team leaders (must have existing user profiles)"],
     ["• Relationship_Map: Which sellers work with which accounts"],
     ["• Manager_Team: Which sellers report to which managers"],
+    ["• Chat_Messages: Chat messages between managers and sellers"],
     [""],
     ["REQUIRED FIELDS:"],
     ["• Accounts: account_name, size, current_division"],
@@ -2776,6 +2939,7 @@ export function downloadComprehensiveTemplate() {
     ["• Managers: manager_name, manager_email"],
     ["• Relationship_Map: account_name, seller_name, status"],
     ["• Manager_Team: manager_name, seller_name, is_primary (optional)"],
+    ["• Chat_Messages: seller_name, user_name, user_email, content, role, created_at, updated_at"],
     [""],
     ["VALID VALUES:"],
     ["• size: 'enterprise' or 'midmarket'"],
@@ -2785,6 +2949,8 @@ export function downloadComprehensiveTemplate() {
     ["  - 'must_keep': Account must remain with this seller - stored in relationship_maps"],
     ["  - 'for_discussion': Account assignment needs to be discussed - stored in relationship_maps"],
     ["  - 'to_be_peeled': Account should be reassigned to another seller - stored in relationship_maps"],
+    ["• role: 'manager' or 'admin' - who sent the message"],
+    ["• created_at/updated_at: ISO 8601 format (e.g., '2024-01-15T10:30:00Z')"],
     [""],
     ["IMPORTANT NOTES:"],
     ["• Manager emails must match existing user profiles"],
@@ -2795,6 +2961,7 @@ export function downloadComprehensiveTemplate() {
     ["• Use seniority_type: 'junior' or 'senior' - determines revenue targets and account limits"],
     ["• is_primary: TRUE for primary manager, FALSE for secondary managers (defaults to TRUE if not specified)"],
     ["• book_finalized: TRUE or FALSE - indicates if seller's book is finalized (defaults to FALSE if not specified)"],
+    ["• Chat_Messages: seller_name and user_email must match existing sellers and profiles"],
     ["• Latitude/longitude will be automatically mapped from country/state codes"]
   ];
   
@@ -2859,7 +3026,8 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
     sellers: { imported: 0, errors: [] as string[] },
     managers: { imported: 0, errors: [] as string[] },
     relationships: { imported: 0, errors: [] as string[] },
-    managerTeams: { imported: 0, errors: [] as string[] }
+    managerTeams: { imported: 0, errors: [] as string[] },
+    chatMessages: { imported: 0, errors: [] as string[] }
   };
   
   try {
@@ -3032,110 +3200,67 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
     
     // 3. Import Sellers
     if (wb.SheetNames.includes("Sellers")) {
+      const sellersStep = startStep("Sellers Import", undefined);
+      logConnectionPoolStatus("Starting sellers import");
+      logMemoryUsage();
+      
       try {
-        // BACKUP: Save chat messages before truncating sellers (CASCADE DELETE will remove them)
-        onProgress?.("💬 Backing up chat messages before seller truncation...");
-        const chatBackupStart = Date.now();
+        onProgress?.("🗑️ Truncating sellers table...");
+        const truncateStart = Date.now();
         
-        const { data: chatMessages, error: chatBackupError } = await (supabase as any)
-          .from('seller_chat_messages')
-          .select(`
-            id,
-            seller_id,
-            user_id,
-            content,
-            role,
-            created_at,
-            updated_at,
-            sellers!inner(name)
-          `);
-        
-        if (chatBackupError) {
-          onProgress?.(`⚠️ Warning: Could not backup chat messages: ${chatBackupError.message}`);
-        } else {
-          const chatBackupDuration = Date.now() - chatBackupStart;
-          onProgress?.(`💾 Chat backup completed in ${chatBackupDuration}ms - ${chatMessages?.length || 0} messages backed up`);
-        }
-
-        // Truncate sellers table first (this will CASCADE DELETE chat messages)
-        onProgress?.("🗑️ Truncating sellers table (chat messages will be temporarily removed)...");
+        // Truncate sellers table first
         const { error: truncateError } = await supabase
           .from("sellers")
           .delete()
           .neq("id", "00000000-0000-0000-0000-000000000000");
         
+        const truncateDuration = Date.now() - truncateStart;
+        onProgress?.(`⏱️ Truncate completed in ${truncateDuration}ms`);
+        
         if (truncateError) {
           throw new Error(`Failed to truncate sellers table: ${truncateError.message}`);
         }
 
+        onProgress?.("📊 Processing sellers data...");
         const sellersData = sheetToJson<SellerRow>(wb, "Sellers");
+        onProgress?.(`📋 Found ${sellersData.length} sellers to import`);
         
         if (sellersData.length > 0) {
+          onProgress?.("📁 Creating temporary file for sellers...");
+          const tempFileStart = Date.now();
+          
           const tempWb = XLSX.utils.book_new();
           const tempWs = XLSX.utils.json_to_sheet(sellersData);
           XLSX.utils.book_append_sheet(tempWb, tempWs, "Sellers");
           const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_sellers.xlsx");
           
+          const tempFileDuration = Date.now() - tempFileStart;
+          onProgress?.(`⏱️ Temp file created in ${tempFileDuration}ms`);
+          
+          onProgress?.("💾 Importing sellers to database...");
+          const importStart = Date.now();
+          
           await importSellers(tempFile, userId);
           results.sellers.imported = sellersData.length;
           
-          // RESTORE: Restore chat messages after sellers are imported
-          if (chatMessages && chatMessages.length > 0) {
-            onProgress?.("💬 Restoring chat messages after seller import...");
-            const chatRestoreStart = Date.now();
-            
-            let restoredCount = 0;
-            let failedCount = 0;
-            
-            for (const chat of chatMessages) {
-              try {
-                // Find the new seller by name
-                const { data: newSeller, error: sellerLookupError } = await supabase
-                  .from('sellers')
-                  .select('id')
-                  .eq('name', chat.sellers.name)
-                  .single();
-                
-                if (sellerLookupError || !newSeller) {
-                  onProgress?.(`⚠️ Could not find seller "${chat.sellers.name}" for chat message restoration`);
-                  failedCount++;
-                  continue;
-                }
-                
-                // Restore the chat message with the new seller_id
-                const { error: restoreError } = await (supabase as any)
-                  .from('seller_chat_messages')
-                  .insert({
-                    seller_id: newSeller.id, // New seller ID
-                    user_id: chat.user_id,   // Same user ID
-                    content: chat.content,   // Same content
-                    role: chat.role,         // Same role
-                    created_at: chat.created_at, // Preserve original timestamp
-                    updated_at: chat.updated_at  // Preserve original timestamp
-                    // id will be auto-generated
-                  });
-                
-                if (restoreError) {
-                  onProgress?.(`⚠️ Failed to restore chat message for "${chat.sellers.name}": ${restoreError.message}`);
-                  failedCount++;
-                } else {
-                  restoredCount++;
-                }
-              } catch (error) {
-                onProgress?.(`⚠️ Error restoring chat message for "${chat.sellers.name}": ${error}`);
-                failedCount++;
-              }
-            }
-            
-            const chatRestoreDuration = Date.now() - chatRestoreStart;
-            onProgress?.(`✅ Chat restore completed in ${chatRestoreDuration}ms - ${restoredCount} restored, ${failedCount} failed`);
-          }
+          const importDuration = Date.now() - importStart;
+          onProgress?.(`⏱️ Database import completed in ${importDuration}ms`);
+          
+          endStep(sellersStep, sellersData.length);
+          onProgress?.(`✅ Sellers: ${sellersData.length} imported successfully`);
         } else {
+          onProgress?.("⚠️ No seller data found in Sellers sheet");
+          endStep(sellersStep, 0);
         }
       } catch (error) {
-        results.sellers.errors.push(`Seller import failed: ${error}`);
+        const errorMsg = `Seller import failed: ${error}`;
+        results.sellers.errors.push(errorMsg);
+        logError(errorMsg, "Sellers Import");
+        endStep(sellersStep, 0, [errorMsg]);
+        onProgress?.(`❌ Sellers import failed: ${error}`);
       }
     } else {
+      onProgress?.("⚠️ No Sellers sheet found in Excel file");
     }
     
     // 4. Import Relationship Map
@@ -3227,6 +3352,72 @@ export async function importComprehensiveData(file: File, userId?: string, onPro
         results.managerTeams.errors.push(`Manager team import failed: ${error}`);
       }
     } else {
+    }
+    
+    // 6. Import Chat Messages
+    if (wb.SheetNames.includes("Chat_Messages")) {
+      const chatMessagesStep = startStep("Chat Messages Import", undefined);
+      logConnectionPoolStatus("Starting chat messages import");
+      logMemoryUsage();
+      
+      try {
+        onProgress?.("🗑️ Truncating chat messages table...");
+        const truncateStart = Date.now();
+        
+        // Truncate chat messages table first
+        const { error: truncateError } = await supabase
+          .from("seller_chat_messages" as any)
+          .delete()
+          .neq("id", "00000000-0000-0000-0000-000000000000"); // Delete all records
+        
+        const truncateDuration = Date.now() - truncateStart;
+        onProgress?.(`⏱️ Truncate completed in ${truncateDuration}ms`);
+        
+        if (truncateError) {
+          throw new Error(`Failed to truncate chat messages table: ${truncateError.message}`);
+        }
+
+        onProgress?.("📊 Processing chat messages data...");
+        const chatMessagesData = sheetToJson<ChatMessageRow>(wb, "Chat_Messages");
+        onProgress?.(`📋 Found ${chatMessagesData.length} chat messages to import`);
+        
+        if (chatMessagesData.length > 0) {
+          onProgress?.("📁 Creating temporary file for chat messages...");
+          const tempFileStart = Date.now();
+          
+          // Create a temporary file for chat messages import
+          const tempWb = XLSX.utils.book_new();
+          const tempWs = XLSX.utils.json_to_sheet(chatMessagesData);
+          XLSX.utils.book_append_sheet(tempWb, tempWs, "Chat_Messages");
+          const tempFile = new File([XLSX.write(tempWb, { bookType: 'xlsx', type: 'array' })], "temp_chat_messages.xlsx");
+          
+          const tempFileDuration = Date.now() - tempFileStart;
+          onProgress?.(`⏱️ Temp file created in ${tempFileDuration}ms`);
+          
+          onProgress?.("💾 Importing chat messages to database...");
+          const importStart = Date.now();
+          
+          await importChatMessages(tempFile, userId);
+          results.chatMessages.imported = chatMessagesData.length;
+          
+          const importDuration = Date.now() - importStart;
+          onProgress?.(`⏱️ Database import completed in ${importDuration}ms`);
+          
+          endStep(chatMessagesStep, chatMessagesData.length);
+          onProgress?.(`✅ Chat Messages: ${chatMessagesData.length} imported successfully`);
+        } else {
+          onProgress?.("⚠️ No chat message data found in Chat_Messages sheet");
+          endStep(chatMessagesStep, 0);
+        }
+      } catch (error) {
+        const errorMsg = `Chat messages import failed: ${error}`;
+        results.chatMessages.errors.push(errorMsg);
+        logError(errorMsg, "Chat Messages Import");
+        endStep(chatMessagesStep, 0, [errorMsg]);
+        onProgress?.(`❌ Chat messages import failed: ${error}`);
+      }
+    } else {
+      onProgress?.("⚠️ No Chat_Messages sheet found in Excel file");
     }
     
     // Release import lock first so materialized views can refresh
