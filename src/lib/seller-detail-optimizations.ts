@@ -5,7 +5,7 @@
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getSellerDetailData, getSellerRevenue, getAvailableAccountsWithFit } from './seller-detail-queries';
+import { getSellerDetailData, getSellerRevenue, getAllAccountsWithAssignmentStatus } from './seller-detail-queries';
 
 /**
  * OPTIMIZATION STRATEGY:
@@ -62,7 +62,7 @@ export function useSellerDetailData(sellerId: string, authorized: boolean) {
   // Available accounts with fit - very short cache for real-time updates
   const availableAccountsQuery = useQuery({
     queryKey: ["availableAccountsWithFit", sellerId],
-    queryFn: () => getAvailableAccountsWithFit(sellerId),
+    queryFn: () => getAllAccountsWithAssignmentStatus(sellerId, 1, 50),
     enabled: !!sellerId && authorized,
     staleTime: 10 * 1000, // 10 seconds
     refetchInterval: 5 * 1000, // 5 seconds
