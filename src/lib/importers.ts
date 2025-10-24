@@ -3601,7 +3601,25 @@ export async function exportComprehensiveData() {
     const accountsData = await exportAccountsTable();
     console.log('Accounts data:', accountsData?.length || 0, 'records');
     if (accountsData && accountsData.length > 0) {
+      console.log('Creating Excel sheet for accounts...');
       const accountsWs = XLSX.utils.json_to_sheet(accountsData);
+      
+      // Debug: Check the Excel sheet data
+      const sheetData = XLSX.utils.sheet_to_json(accountsWs);
+      const sheetNames = sheetData.map((row: any) => row.account_name);
+      const uniqueSheetNames = Array.from(new Set(sheetNames));
+      console.log(`Excel sheet - Unique account names: ${uniqueSheetNames.length}, Total accounts: ${sheetNames.length}`);
+      
+      if (uniqueSheetNames.length !== sheetNames.length) {
+        console.log('DUPLICATE ACCOUNT NAMES IN EXCEL SHEET!');
+        const duplicates = sheetNames.filter((name, index) => sheetNames.indexOf(name) !== index);
+        const uniqueDuplicates = Array.from(new Set(duplicates));
+        console.log('Duplicate account names in Excel sheet:', uniqueDuplicates);
+        
+        const westfallCount = sheetNames.filter(name => name === "Westfall Local Schools").length;
+        console.log(`"Westfall Local Schools" appears ${westfallCount} times in Excel sheet`);
+      }
+      
       XLSX.utils.book_append_sheet(wb, accountsWs, "Accounts");
     }
     
@@ -3646,7 +3664,25 @@ export async function exportComprehensiveData() {
     const originalRelationshipsData = await exportOriginalRelationshipsTable();
     console.log('Original relationships data:', originalRelationshipsData?.length || 0, 'records');
     if (originalRelationshipsData && originalRelationshipsData.length > 0) {
+      console.log('Creating Excel sheet for original relationships...');
       const originalRelationshipsWs = XLSX.utils.json_to_sheet(originalRelationshipsData);
+      
+      // Debug: Check the Excel sheet data for original relationships
+      const sheetData = XLSX.utils.sheet_to_json(originalRelationshipsWs);
+      const sheetKeys = sheetData.map((row: any) => `${row.account_name}|${row.seller_name}`);
+      const uniqueSheetKeys = Array.from(new Set(sheetKeys));
+      console.log(`Original relationships Excel sheet - Unique combinations: ${uniqueSheetKeys.length}, Total relationships: ${sheetKeys.length}`);
+      
+      if (uniqueSheetKeys.length !== sheetKeys.length) {
+        console.log('DUPLICATE ORIGINAL RELATIONSHIPS IN EXCEL SHEET!');
+        const duplicates = sheetKeys.filter((key, index) => sheetKeys.indexOf(key) !== index);
+        const uniqueDuplicates = Array.from(new Set(duplicates));
+        console.log('Duplicate relationship combinations in Excel sheet:', uniqueDuplicates);
+        
+        const stellaCount = sheetKeys.filter(key => key.includes("Stella & Chewy'S, Llc")).length;
+        console.log(`"Stella & Chewy'S, Llc" appears ${stellaCount} times in Excel sheet`);
+      }
+      
       XLSX.utils.book_append_sheet(wb, originalRelationshipsWs, "Original_Relationships");
     }
 
@@ -3760,6 +3796,17 @@ export async function exportComprehensiveData() {
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
     
+    // Final summary
+    console.log('✅ Comprehensive export completed successfully');
+    console.log('📊 EXPORT SUMMARY:');
+    console.log(`   • Accounts: ${accountsData?.length || 0} records`);
+    console.log(`   • Sellers: ${sellersData?.length || 0} records`);
+    console.log(`   • Managers: ${managersData?.length || 0} records`);
+    console.log(`   • Relationship_Map: ${relationshipData?.length || 0} records`);
+    console.log(`   • Manager_Team: ${managerTeamData?.length || 0} records`);
+    console.log(`   • Original_Relationships: ${originalRelationshipsData?.length || 0} records`);
+    console.log(`   • Chat_Messages: ${chatMessagesData?.length || 0} records`);
+    
     return { exported: 'all_tables', filename: link.download };
     
   } catch (error) {
@@ -3778,9 +3825,11 @@ async function exportAccountsTable() {
     let hasMore = true;
     
     while (hasMore) {
+      console.log(`Fetching accounts batch from ${from} to ${from + limit - 1}`);
       const { data: accountsBatch, error } = await supabase
         .from('accounts')
         .select(`
+          id,
           name,
           industry,
           size,
@@ -3798,21 +3847,51 @@ async function exportAccountsTable() {
           )
         `)
         .range(from, from + limit - 1)
-        .order('created_at', { ascending: false });
+        .order('id', { ascending: true });
 
       if (error) {
         throw new Error(`Failed to fetch accounts: ${error.message}`);
       }
 
       if (accountsBatch && accountsBatch.length > 0) {
+        console.log(`Fetched ${accountsBatch.length} accounts in this batch`);
+        
+        // Check for "Westfall Local Schools" specifically
+        const westfallAccounts = accountsBatch.filter(acc => acc.name === "Westfall Local Schools");
+        if (westfallAccounts.length > 0) {
+          console.log(`Found ${westfallAccounts.length} "Westfall Local Schools" accounts in this batch:`, westfallAccounts.map(acc => acc.id));
+        }
+        
         allAccounts = allAccounts.concat(accountsBatch);
         from += limit;
+        // If we got fewer records than the limit, we've reached the end
+        if (accountsBatch.length < limit) {
+          hasMore = false;
+        }
       } else {
         hasMore = false;
       }
     }
 
-    return allAccounts.map((account: any) => {
+    console.log(`Total accounts fetched: ${allAccounts.length}`);
+    
+    // Final check for duplicates
+    const accountNames = allAccounts.map(acc => acc.name);
+    const uniqueNames = Array.from(new Set(accountNames));
+    console.log(`Unique account names: ${uniqueNames.length}, Total accounts: ${accountNames.length}`);
+    
+    if (uniqueNames.length !== accountNames.length) {
+      console.log('DUPLICATE ACCOUNT NAMES DETECTED!');
+      const duplicates = accountNames.filter((name, index) => accountNames.indexOf(name) !== index);
+      const uniqueDuplicates = Array.from(new Set(duplicates));
+      console.log('Duplicate account names:', uniqueDuplicates);
+      
+      // Check specifically for "Westfall Local Schools"
+      const westfallCount = accountNames.filter(name => name === "Westfall Local Schools").length;
+      console.log(`"Westfall Local Schools" appears ${westfallCount} times`);
+    }
+
+    const transformedAccounts = allAccounts.map((account: any) => {
       const revenue = account.account_revenues;
       return {
         account_name: account.name,
@@ -3830,6 +3909,24 @@ async function exportAccountsTable() {
         revenue_MSG_US: revenue?.revenue_msg_us || 0
       };
     });
+    
+    // Check for duplicates in transformed data
+    const transformedNames = transformedAccounts.map(acc => acc.account_name);
+    const uniqueTransformedNames = Array.from(new Set(transformedNames));
+    console.log(`Transformed - Unique account names: ${uniqueTransformedNames.length}, Total accounts: ${transformedNames.length}`);
+    
+    if (uniqueTransformedNames.length !== transformedNames.length) {
+      console.log('DUPLICATE ACCOUNT NAMES IN TRANSFORMED DATA!');
+      const duplicates = transformedNames.filter((name, index) => transformedNames.indexOf(name) !== index);
+      const uniqueDuplicates = Array.from(new Set(duplicates));
+      console.log('Duplicate account names in transformed data:', uniqueDuplicates);
+      
+      // Check specifically for "Westfall Local Schools" in transformed data
+      const westfallCount = transformedNames.filter(name => name === "Westfall Local Schools").length;
+      console.log(`"Westfall Local Schools" appears ${westfallCount} times in transformed data`);
+    }
+    
+    return transformedAccounts;
   } catch (error) {
     console.error('Error exporting accounts:', error);
     return [];
@@ -3871,7 +3968,7 @@ async function exportSellersTable() {
           )
         `)
         .range(from, from + limit - 1)
-        .order('created_at', { ascending: false });
+        .order('id', { ascending: true });
 
       if (error) {
         console.error('Error fetching sellers:', error);
@@ -3882,6 +3979,10 @@ async function exportSellersTable() {
       if (sellersBatch && sellersBatch.length > 0) {
         allSellers = allSellers.concat(sellersBatch);
         from += limit;
+        // If we got fewer records than the limit, we've reached the end
+        if (sellersBatch.length < limit) {
+          hasMore = false;
+        }
       } else {
         hasMore = false;
       }
@@ -3935,7 +4036,7 @@ async function exportManagersTable() {
           )
         `)
         .range(from, from + limit - 1)
-        .order('created_at', { ascending: false });
+        .order('id', { ascending: true });
 
       if (error) {
         console.error('Error fetching managers:', error);
@@ -3946,6 +4047,10 @@ async function exportManagersTable() {
       if (managersBatch && managersBatch.length > 0) {
         allManagers = allManagers.concat(managersBatch);
         from += limit;
+        // If we got fewer records than the limit, we've reached the end
+        if (managersBatch.length < limit) {
+          hasMore = false;
+        }
       } else {
         hasMore = false;
       }
@@ -3989,7 +4094,7 @@ async function exportRelationshipMapTable() {
           )
         `)
         .range(from, from + limit - 1)
-        .order('updated_at', { ascending: false });
+        .order('id', { ascending: true });
 
       if (error) {
         console.error('Error fetching relationships:', error);
@@ -4000,12 +4105,33 @@ async function exportRelationshipMapTable() {
       if (relationshipsBatch && relationshipsBatch.length > 0) {
         allRelationships = allRelationships.concat(relationshipsBatch);
         from += limit;
+        // If we got fewer records than the limit, we've reached the end
+        if (relationshipsBatch.length < limit) {
+          hasMore = false;
+        }
       } else {
         hasMore = false;
       }
     }
 
     console.log(`Total relationships fetched: ${allRelationships.length}`);
+    
+    // Debug: Check for missing account/seller names
+    const missingAccounts = allRelationships.filter(r => !r.accounts?.name).length;
+    const missingSellers = allRelationships.filter(r => !r.sellers?.name).length;
+    console.log(`Relationships with missing account names: ${missingAccounts}`);
+    console.log(`Relationships with missing seller names: ${missingSellers}`);
+    
+    if (missingAccounts > 0 || missingSellers > 0) {
+      console.log('Sample relationships with missing data:');
+      allRelationships
+        .filter(r => !r.accounts?.name || !r.sellers?.name)
+        .slice(0, 5)
+        .forEach((r, i) => {
+          console.log(`  ${i + 1}. Account: ${r.accounts?.name || 'MISSING'}, Seller: ${r.sellers?.name || 'MISSING'}`);
+        });
+    }
+    
     const result = allRelationships.map((relationship: any) => ({
       account_name: relationship.accounts?.name || '',
       seller_name: relationship.sellers?.name || '',
@@ -4044,7 +4170,7 @@ async function exportManagerTeamTable() {
           )
         `)
         .range(from, from + limit - 1)
-        .order('created_at', { ascending: false });
+        .order('id', { ascending: true });
 
       if (error) {
         console.error('Error fetching manager teams:', error);
@@ -4055,6 +4181,10 @@ async function exportManagerTeamTable() {
       if (managerTeamsBatch && managerTeamsBatch.length > 0) {
         allManagerTeams = allManagerTeams.concat(managerTeamsBatch);
         from += limit;
+        // If we got fewer records than the limit, we've reached the end
+        if (managerTeamsBatch.length < limit) {
+          hasMore = false;
+        }
       } else {
         hasMore = false;
       }
@@ -4090,6 +4220,8 @@ async function exportOriginalRelationshipsTable() {
       const { data: originalRelationshipsBatch, error } = await supabase
         .from('original_relationships')
         .select(`
+          account_id,
+          seller_id,
           created_at,
           accounts (
             name
@@ -4099,7 +4231,7 @@ async function exportOriginalRelationshipsTable() {
           )
         `)
         .range(from, from + limit - 1)
-        .order('created_at', { ascending: false });
+        .order('id', { ascending: true });
 
       if (error) {
         console.error('Error fetching original relationships:', error);
@@ -4107,20 +4239,87 @@ async function exportOriginalRelationshipsTable() {
       }
 
       console.log(`Fetched ${originalRelationshipsBatch?.length || 0} original relationships in this batch`);
+      
+      // Check for "Stella & Chewy'S, Llc" specifically
+      const stellaRelationships = originalRelationshipsBatch?.filter(rel => rel.accounts?.name === "Stella & Chewy'S, Llc") || [];
+      if (stellaRelationships.length > 0) {
+        console.log(`Found ${stellaRelationships.length} "Stella & Chewy'S, Llc" relationships in this batch:`);
+        stellaRelationships.forEach((rel, index) => {
+          console.log(`  ${index + 1}. Account ID: ${rel.account_id}, Seller ID: ${rel.seller_id}, Account: "${rel.accounts?.name}", Seller: "${rel.sellers?.name}", Created: ${rel.created_at}`);
+        });
+      }
+      
       if (originalRelationshipsBatch && originalRelationshipsBatch.length > 0) {
         allOriginalRelationships = allOriginalRelationships.concat(originalRelationshipsBatch);
         from += limit;
+        // If we got fewer records than the limit, we've reached the end
+        if (originalRelationshipsBatch.length < limit) {
+          hasMore = false;
+        }
       } else {
         hasMore = false;
       }
     }
 
     console.log(`Total original relationships fetched: ${allOriginalRelationships.length}`);
+    
+    // Debug: Check for missing account/seller names
+    const missingAccounts = allOriginalRelationships.filter(r => !r.accounts?.name).length;
+    const missingSellers = allOriginalRelationships.filter(r => !r.sellers?.name).length;
+    console.log(`Original relationships with missing account names: ${missingAccounts}`);
+    console.log(`Original relationships with missing seller names: ${missingSellers}`);
+    
+    if (missingAccounts > 0 || missingSellers > 0) {
+      console.log('Sample relationships with missing data:');
+      allOriginalRelationships
+        .filter(r => !r.accounts?.name || !r.sellers?.name)
+        .slice(0, 5)
+        .forEach((r, i) => {
+          console.log(`  ${i + 1}. Account: ${r.accounts?.name || 'MISSING'}, Seller: ${r.sellers?.name || 'MISSING'}`);
+        });
+    }
+    
     const result = allOriginalRelationships.map((relationship: any) => ({
       account_name: relationship.accounts?.name || '',
       seller_name: relationship.sellers?.name || '',
       created_at: relationship.created_at
     }));
+    
+    // Final check for duplicates in original relationships
+    const relationshipKeys = result.map(rel => `${rel.account_name}|${rel.seller_name}`);
+    const uniqueKeys = Array.from(new Set(relationshipKeys));
+    console.log(`Original relationships - Unique combinations: ${uniqueKeys.length}, Total relationships: ${relationshipKeys.length}`);
+    
+    // Also check for duplicate IDs in the raw data
+    const idKeys = allOriginalRelationships.map(rel => `${rel.account_id}|${rel.seller_id}`);
+    const uniqueIdKeys = Array.from(new Set(idKeys));
+    console.log(`Original relationships - Unique ID combinations: ${uniqueIdKeys.length}, Total relationships: ${idKeys.length}`);
+    
+    if (uniqueKeys.length !== relationshipKeys.length) {
+      console.log('DUPLICATE ORIGINAL RELATIONSHIPS DETECTED!');
+      const duplicates = relationshipKeys.filter((key, index) => relationshipKeys.indexOf(key) !== index);
+      const uniqueDuplicates = Array.from(new Set(duplicates));
+      console.log('Duplicate relationship combinations:', uniqueDuplicates);
+      
+      // Check specifically for "Stella & Chewy'S, Llc"
+      const stellaCount = relationshipKeys.filter(key => key.includes("Stella & Chewy'S, Llc")).length;
+      console.log(`"Stella & Chewy'S, Llc" appears ${stellaCount} times in original relationships`);
+      
+      // Show all Stella relationships for analysis
+      const stellaRelationships = result.filter(rel => rel.account_name === "Stella & Chewy'S, Llc");
+      console.log('All "Stella & Chewy\'S, Llc" relationships found:');
+      stellaRelationships.forEach((rel, index) => {
+        console.log(`  ${index + 1}. Account: "${rel.account_name}", Seller: "${rel.seller_name}", Created: ${rel.created_at}`);
+      });
+    }
+    
+    if (uniqueIdKeys.length !== idKeys.length) {
+      console.log('DUPLICATE ID COMBINATIONS DETECTED IN RAW DATA!');
+      const duplicateIds = idKeys.filter((key, index) => idKeys.indexOf(key) !== index);
+      const uniqueDuplicateIds = Array.from(new Set(duplicateIds));
+      console.log('Duplicate ID combinations:', uniqueDuplicateIds);
+    }
+    
     console.log(`Mapped ${result.length} original relationships for export`);
     return result;
   } catch (error) {
@@ -4156,7 +4355,7 @@ async function exportChatMessagesTable() {
           )
         `)
         .range(from, from + limit - 1)
-        .order('created_at', { ascending: false });
+        .order('id', { ascending: true });
 
       if (error) {
         console.error('Error fetching chat messages:', error);
@@ -4167,6 +4366,10 @@ async function exportChatMessagesTable() {
       if (chatMessagesBatch && chatMessagesBatch.length > 0) {
         allChatMessages = allChatMessages.concat(chatMessagesBatch);
         from += limit;
+        // If we got fewer records than the limit, we've reached the end
+        if (chatMessagesBatch.length < limit) {
+          hasMore = false;
+        }
       } else {
         hasMore = false;
       }
@@ -4273,7 +4476,7 @@ export async function exportCompleteAccountsWithAssignedSellers() {
           )
         `)
         .range(from, from + limit - 1)
-        .order('created_at', { ascending: false });
+        .order('id', { ascending: true });
 
       if (error) {
         throw new Error(`Failed to fetch accounts: ${error.message}`);
@@ -4282,6 +4485,10 @@ export async function exportCompleteAccountsWithAssignedSellers() {
       if (accountsBatch && accountsBatch.length > 0) {
         allAccounts = allAccounts.concat(accountsBatch);
         from += limit;
+        // If we got fewer records than the limit, we've reached the end
+        if (accountsBatch.length < limit) {
+          hasMore = false;
+        }
       } else {
         hasMore = false;
       }
